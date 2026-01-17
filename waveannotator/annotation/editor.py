@@ -567,6 +567,18 @@ class AnnotationEditorWidget(pg.PlotWidget):
                 self.refresh()
                 self.boundary_moved.emit(tier_idx, boundary_idx, x)
 
+                # Update selection region if there's a selected interval on this tier
+                if (self._selected_tier_idx == tier_idx and
+                    self._selected_interval_idx is not None):
+                    try:
+                        interval = tier.get_interval(self._selected_interval_idx)
+                        self._selection_start = interval.start
+                        self._selection_end = interval.end
+                        self._selection_region.setRegion([interval.start, interval.end])
+                        self.selection_changed.emit(interval.start, interval.end)
+                    except (IndexError, ValueError):
+                        pass
+
             # Update cursor position to follow the drag
             self._cursor_time = x
             self._cursor_line.setPos(x)
@@ -643,6 +655,21 @@ class AnnotationEditorWidget(pg.PlotWidget):
                     tier.add_boundary(x)
                     self.refresh()
                     self.boundary_added.emit(tier_idx, x)
+
+                    # Update selection to the interval at the click position
+                    # (the interval that was split now has new bounds)
+                    if self._selected_tier_idx == tier_idx:
+                        try:
+                            interval_idx, interval = tier.get_interval_at_time(x)
+                            self._selected_interval_idx = interval_idx
+                            self._selection_start = interval.start
+                            self._selection_end = interval.end
+                            self._selection_region.setRegion([interval.start, interval.end])
+                            if tier_idx < len(self._tier_items):
+                                self._tier_items[tier_idx].set_selected_interval(interval_idx)
+                            self.selection_changed.emit(interval.start, interval.end)
+                        except ValueError:
+                            pass
                 except ValueError:
                     pass  # Boundary already exists or outside range
 
