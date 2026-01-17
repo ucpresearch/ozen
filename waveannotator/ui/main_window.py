@@ -4,13 +4,13 @@ from pathlib import Path
 from typing import Optional
 import traceback
 
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMetaObject, Q_ARG, Qt as QtCore
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMetaObject, Q_ARG, Qt as QtCore, QEvent
+from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QProgressDialog, QStatusBar, QToolBar,
     QCheckBox, QComboBox, QLabel, QSplitter, QGroupBox,
-    QMessageBox, QPushButton
+    QMessageBox, QPushButton, QInputDialog
 )
 
 from ..audio.loader import load_audio, AudioData
@@ -18,6 +18,10 @@ from ..audio.player import AudioPlayer
 from ..analysis.acoustic import extract_features, compute_spectrogram, AcousticFeatures
 from ..visualization.waveform import WaveformWidget
 from ..visualization.spectrogram import SpectrogramWidget
+from ..annotation import (
+    AnnotationSet, AnnotationEditorWidget,
+    read_textgrid, write_textgrid, read_tsv, write_tsv
+)
 
 
 class FeatureExtractionThread(QThread):
@@ -70,6 +74,7 @@ class MainWindow(QMainWindow):
         self._player = AudioPlayer()
         self._current_file_path: str | None = None
         self._feature_thread: FeatureExtractionThread | None = None
+        self._annotations: AnnotationSet | None = None
 
         self._setup_ui()
         self._setup_menus()
@@ -85,6 +90,9 @@ class MainWindow(QMainWindow):
         # Connect playback finished signal (for thread-safe callback)
         self._playback_finished_signal.connect(self._on_playback_finished)
 
+        # Install event filter to catch key events for text input
+        self.installEventFilter(self)
+
     def _setup_ui(self):
         """Setup the main UI layout."""
         self.setWindowTitle("WaveAnnotator")
@@ -96,7 +104,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Create splitter for waveform and spectrogram
+        # Create splitter for waveform, spectrogram, and annotations
         splitter = QSplitter(Qt.Orientation.Vertical)
         layout.addWidget(splitter)
 
@@ -108,8 +116,12 @@ class MainWindow(QMainWindow):
         self._spectrogram = SpectrogramWidget()
         splitter.addWidget(self._spectrogram)
 
-        # Set initial sizes (1:3 ratio)
-        splitter.setSizes([200, 600])
+        # Annotation editor widget
+        self._annotation_editor = AnnotationEditorWidget()
+        splitter.addWidget(self._annotation_editor)
+
+        # Set initial sizes (waveform:spectrogram:annotations ratio)
+        splitter.setSizes([150, 450, 200])
 
         # Control panel
         controls = self._create_control_panel()
@@ -223,6 +235,28 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        # Annotation import/export
+        import_textgrid = QAction("Import &TextGrid...", self)
+        import_textgrid.triggered.connect(self._import_textgrid)
+        file_menu.addAction(import_textgrid)
+
+        export_textgrid = QAction("Export Text&Grid...", self)
+        export_textgrid.setShortcut(QKeySequence.StandardKey.Save)
+        export_textgrid.triggered.connect(self._export_textgrid)
+        file_menu.addAction(export_textgrid)
+
+        file_menu.addSeparator()
+
+        import_tsv = QAction("Import TS&V...", self)
+        import_tsv.triggered.connect(self._import_tsv)
+        file_menu.addAction(import_tsv)
+
+        export_tsv = QAction("Export &TSV...", self)
+        export_tsv.triggered.connect(self._export_tsv)
+        file_menu.addAction(export_tsv)
+
+        file_menu.addSeparator()
+
         quit_action = QAction("&Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
@@ -245,6 +279,38 @@ class MainWindow(QMainWindow):
         fit_view.setShortcut("Ctrl+0")
         fit_view.triggered.connect(self._fit_view)
         view_menu.addAction(fit_view)
+
+        # Annotation menu
+        annotation_menu = menubar.addMenu("&Annotation")
+
+        add_tier = QAction("&Add Tier", self)
+        add_tier.triggered.connect(self._add_tier)
+        annotation_menu.addAction(add_tier)
+
+        remove_tier = QAction("&Remove Tier", self)
+        remove_tier.triggered.connect(self._remove_tier)
+        annotation_menu.addAction(remove_tier)
+
+        rename_tier = QAction("Re&name Tier...", self)
+        rename_tier.triggered.connect(self._rename_tier)
+        annotation_menu.addAction(rename_tier)
+
+        annotation_menu.addSeparator()
+
+        add_boundary = QAction("Add &Boundary (Enter)", self)
+        add_boundary.triggered.connect(self._add_boundary_at_cursor)
+        annotation_menu.addAction(add_boundary)
+
+        remove_boundary = QAction("Remove Boun&dary (Delete)", self)
+        remove_boundary.triggered.connect(self._remove_nearest_boundary)
+        annotation_menu.addAction(remove_boundary)
+
+        annotation_menu.addSeparator()
+
+        play_interval = QAction("&Play Interval", self)
+        play_interval.setShortcut("P")
+        play_interval.triggered.connect(self._play_interval_at_cursor)
+        annotation_menu.addAction(play_interval)
 
     def _setup_toolbar(self):
         """Setup toolbar with prominent playback buttons."""
@@ -278,6 +344,21 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # Navigation controls
+        nav_left_btn = QPushButton("◀")
+        nav_left_btn.clicked.connect(self._pan_left)
+        nav_left_btn.setToolTip("Pan left (←)")
+        nav_left_btn.setMaximumWidth(40)
+        toolbar.addWidget(nav_left_btn)
+
+        nav_right_btn = QPushButton("▶")
+        nav_right_btn.clicked.connect(self._pan_right)
+        nav_right_btn.setToolTip("Pan right (→)")
+        nav_right_btn.setMaximumWidth(40)
+        toolbar.addWidget(nav_right_btn)
+
+        toolbar.addSeparator()
+
         # Zoom controls
         zoom_in_btn = QPushButton("+ Zoom In")
         zoom_in_btn.clicked.connect(self._zoom_in)
@@ -289,7 +370,12 @@ class MainWindow(QMainWindow):
         zoom_out_btn.setToolTip("Zoom out (Ctrl+-)")
         toolbar.addWidget(zoom_out_btn)
 
-        fit_btn = QPushButton("Fit")
+        zoom_sel_btn = QPushButton("Zoom Sel")
+        zoom_sel_btn.clicked.connect(self._zoom_to_selection)
+        zoom_sel_btn.setToolTip("Zoom to selection (Z)")
+        toolbar.addWidget(zoom_sel_btn)
+
+        fit_btn = QPushButton("Fit All")
         fit_btn.clicked.connect(self._fit_view)
         fit_btn.setToolTip("Fit to window (Ctrl+0)")
         toolbar.addWidget(fit_btn)
@@ -301,50 +387,87 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         """Connect widget signals."""
-        # Synchronize view ranges between waveform and spectrogram
-        self._waveform.time_range_changed.connect(self._sync_spectrogram_range)
-        self._spectrogram.time_range_changed.connect(self._sync_waveform_range)
+        # Synchronize view ranges between all views
+        self._waveform.time_range_changed.connect(self._sync_from_waveform)
+        self._spectrogram.time_range_changed.connect(self._sync_from_spectrogram)
+        self._annotation_editor.time_range_changed.connect(self._sync_from_annotations)
 
         # Update cursor between views
         self._waveform.cursor_moved.connect(self._on_cursor_moved)
         self._spectrogram.cursor_moved.connect(self._on_cursor_moved)
+        self._annotation_editor.cursor_moved.connect(self._on_cursor_moved)
 
         # Sync selection between views
-        self._waveform.selection_changed.connect(self._sync_selection_to_spectrogram)
-        self._spectrogram.selection_changed.connect(self._sync_selection_to_waveform)
+        self._waveform.selection_changed.connect(self._sync_selection_from_waveform)
+        self._spectrogram.selection_changed.connect(self._sync_selection_from_spectrogram)
+        self._annotation_editor.selection_changed.connect(self._sync_selection_from_annotations)
 
         # Click on selection to play
         self._waveform.selection_clicked.connect(self._play_selection)
         self._spectrogram.selection_clicked.connect(self._play_selection)
+        self._annotation_editor.selection_clicked.connect(self._play_selection)
+
+        # Annotation-specific signals
+        self._annotation_editor.interval_play_requested.connect(self._play_interval)
 
         # Player callbacks
         self._player.set_position_callback(self._on_playback_position)
         # Use signal for thread-safe callback from audio thread
         self._player.set_finished_callback(lambda: self._playback_finished_signal.emit())
 
-    def _sync_selection_to_spectrogram(self, start: float, end: float):
-        """Sync selection from waveform to spectrogram."""
+    def _sync_selection_from_waveform(self, start: float, end: float):
+        """Sync selection from waveform to other views."""
         self._spectrogram.blockSignals(True)
+        self._annotation_editor.blockSignals(True)
         self._spectrogram.set_selection(start, end)
+        self._annotation_editor.set_selection(start, end)
         self._spectrogram.blockSignals(False)
+        self._annotation_editor.blockSignals(False)
 
-    def _sync_selection_to_waveform(self, start: float, end: float):
-        """Sync selection from spectrogram to waveform."""
+    def _sync_selection_from_spectrogram(self, start: float, end: float):
+        """Sync selection from spectrogram to other views."""
         self._waveform.blockSignals(True)
+        self._annotation_editor.blockSignals(True)
         self._waveform.set_selection(start, end)
+        self._annotation_editor.set_selection(start, end)
         self._waveform.blockSignals(False)
+        self._annotation_editor.blockSignals(False)
 
-    def _sync_spectrogram_range(self, start: float, end: float):
-        """Sync spectrogram view to waveform."""
+    def _sync_selection_from_annotations(self, start: float, end: float):
+        """Sync selection from annotations to other views."""
+        self._waveform.blockSignals(True)
         self._spectrogram.blockSignals(True)
-        self._spectrogram.set_x_range(start, end)
+        self._waveform.set_selection(start, end)
+        self._spectrogram.set_selection(start, end)
+        self._waveform.blockSignals(False)
         self._spectrogram.blockSignals(False)
 
-    def _sync_waveform_range(self, start: float, end: float):
-        """Sync waveform view to spectrogram."""
+    def _sync_from_waveform(self, start: float, end: float):
+        """Sync time range from waveform to other views."""
+        self._spectrogram.blockSignals(True)
+        self._annotation_editor.blockSignals(True)
+        self._spectrogram.set_x_range(start, end)
+        self._annotation_editor.set_x_range(start, end)
+        self._spectrogram.blockSignals(False)
+        self._annotation_editor.blockSignals(False)
+
+    def _sync_from_spectrogram(self, start: float, end: float):
+        """Sync time range from spectrogram to other views."""
         self._waveform.blockSignals(True)
+        self._annotation_editor.blockSignals(True)
         self._waveform.setXRange(start, end, padding=0)
+        self._annotation_editor.set_x_range(start, end)
         self._waveform.blockSignals(False)
+        self._annotation_editor.blockSignals(False)
+
+    def _sync_from_annotations(self, start: float, end: float):
+        """Sync time range from annotations to other views."""
+        self._waveform.blockSignals(True)
+        self._spectrogram.blockSignals(True)
+        self._waveform.setXRange(start, end, padding=0)
+        self._spectrogram.set_x_range(start, end)
+        self._waveform.blockSignals(False)
+        self._spectrogram.blockSignals(False)
 
     def _on_cursor_moved(self, time: float):
         """Handle cursor movement."""
@@ -352,10 +475,13 @@ class MainWindow(QMainWindow):
         # Block signals to prevent recursion
         self._waveform.blockSignals(True)
         self._spectrogram.blockSignals(True)
+        self._annotation_editor.blockSignals(True)
         self._waveform.set_cursor_position(time)
         self._spectrogram.set_cursor_position(time)
+        self._annotation_editor.set_cursor_position(time)
         self._waveform.blockSignals(False)
         self._spectrogram.blockSignals(False)
+        self._annotation_editor.blockSignals(False)
 
     def _open_file_dialog(self):
         """Open file dialog to select audio file."""
@@ -379,6 +505,12 @@ class MainWindow(QMainWindow):
 
             # Display waveform
             self._waveform.set_audio_data(self._audio_data)
+
+            # Initialize annotations with one default tier
+            self._annotations = AnnotationSet(duration=self._audio_data.duration)
+            self._annotations.add_tier("Annotation")
+            self._annotation_editor.set_annotations(self._annotations)
+            self._annotation_editor.set_x_range(0, self._audio_data.duration)
 
             # Update window title with filename
             self.setWindowTitle(f"WaveAnnotator - {Path(file_path).name}")
@@ -566,12 +698,20 @@ class MainWindow(QMainWindow):
             self._playback_timer.start()
             self._play_btn.setText("❚❚ Pause")
 
+    def _play_interval(self, start: float, end: float):
+        """Play a specific interval (from annotation)."""
+        if self._audio_data:
+            self._player.play(start, end)
+            self._playback_timer.start()
+            self._play_btn.setText("❚❚ Pause")
+
     def _update_playback_cursor(self):
         """Update cursor position during playback."""
         if self._player.is_playing:
             time = self._player.current_time
             self._waveform.set_cursor_position(time)
             self._spectrogram.set_cursor_position(time)
+            self._annotation_editor.set_cursor_position(time)
             self._time_label.setText(f"Time: {time:.3f}s")
 
     def _on_playback_position(self, time: float):
@@ -610,13 +750,244 @@ class MainWindow(QMainWindow):
             return
         self._waveform.setXRange(0, self._audio_data.duration)
 
+    def _pan_left(self):
+        """Pan view to the left."""
+        if self._audio_data is None:
+            return
+        start, end = self._waveform.get_view_range()
+        width = end - start
+        pan_amount = width * 0.25  # Pan by 25% of visible width
+        new_start = max(0, start - pan_amount)
+        new_end = new_start + width
+        self._waveform.setXRange(new_start, new_end)
+
+    def _pan_right(self):
+        """Pan view to the right."""
+        if self._audio_data is None:
+            return
+        start, end = self._waveform.get_view_range()
+        width = end - start
+        pan_amount = width * 0.25  # Pan by 25% of visible width
+        new_end = min(self._audio_data.duration, end + pan_amount)
+        new_start = new_end - width
+        new_start = max(0, new_start)
+        self._waveform.setXRange(new_start, new_end)
+
+    def _zoom_to_selection(self):
+        """Zoom to fit the current selection."""
+        selection = self._waveform.get_selection()
+        if selection is None:
+            self._status_bar.showMessage("No selection to zoom to")
+            return
+        start, end = selection
+        # Add small padding (5%)
+        padding = (end - start) * 0.05
+        self._waveform.setXRange(start - padding, end + padding)
+
+    def _import_textgrid(self):
+        """Import annotations from a TextGrid file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import TextGrid",
+            "",
+            "TextGrid Files (*.TextGrid *.textgrid);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self._annotations = read_textgrid(file_path)
+                if self._audio_data:
+                    self._annotations.duration = self._audio_data.duration
+                self._annotation_editor.set_annotations(self._annotations)
+                self._status_bar.showMessage(
+                    f"Imported {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import TextGrid: {e}")
+
+    def _export_textgrid(self):
+        """Export annotations to a TextGrid file."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            QMessageBox.warning(self, "Export", "No annotations to export.")
+            return
+
+        # Default filename based on audio file
+        default_name = ""
+        if self._current_file_path:
+            default_name = Path(self._current_file_path).stem + ".TextGrid"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export TextGrid",
+            default_name,
+            "TextGrid Files (*.TextGrid);;All Files (*)"
+        )
+        if file_path:
+            try:
+                write_textgrid(self._annotations, file_path)
+                self._status_bar.showMessage(f"Exported annotations to {Path(file_path).name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to export TextGrid: {e}")
+
+    def _import_tsv(self):
+        """Import annotations from a TSV file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import TSV",
+            "",
+            "TSV Files (*.tsv *.txt);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self._annotations = read_tsv(file_path)
+                if self._audio_data:
+                    self._annotations.duration = self._audio_data.duration
+                self._annotation_editor.set_annotations(self._annotations)
+                self._status_bar.showMessage(
+                    f"Imported {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import TSV: {e}")
+
+    def _export_tsv(self):
+        """Export annotations to a TSV file."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            QMessageBox.warning(self, "Export", "No annotations to export.")
+            return
+
+        default_name = ""
+        if self._current_file_path:
+            default_name = Path(self._current_file_path).stem + ".tsv"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export TSV",
+            default_name,
+            "TSV Files (*.tsv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                write_tsv(self._annotations, file_path)
+                self._status_bar.showMessage(f"Exported annotations to {Path(file_path).name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to export TSV: {e}")
+
+    def _add_tier(self):
+        """Add a new annotation tier."""
+        if self._annotations is None:
+            if self._audio_data is None:
+                QMessageBox.warning(self, "Add Tier", "Load an audio file first.")
+                return
+            self._annotations = AnnotationSet(duration=self._audio_data.duration)
+
+        if self._annotations.num_tiers >= AnnotationSet.MAX_TIERS:
+            QMessageBox.warning(
+                self, "Add Tier",
+                f"Maximum number of tiers ({AnnotationSet.MAX_TIERS}) reached."
+            )
+            return
+
+        name, ok = QInputDialog.getText(
+            self, "Add Tier", "Tier name:",
+            text=f"Tier {self._annotations.num_tiers + 1}"
+        )
+        if ok and name:
+            self._annotations.add_tier(name)
+            self._annotation_editor.set_annotations(self._annotations)
+            self._status_bar.showMessage(f"Added tier: {name}")
+
+    def _remove_tier(self):
+        """Remove the active annotation tier."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            QMessageBox.warning(self, "Remove Tier", "No tiers to remove.")
+            return
+
+        tier = self._annotations.active_tier
+        if tier is None:
+            return
+
+        reply = QMessageBox.question(
+            self, "Remove Tier",
+            f"Remove tier '{tier.name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._annotations.remove_tier(self._annotations.active_tier_index)
+            self._annotation_editor.set_annotations(self._annotations)
+            self._status_bar.showMessage(f"Removed tier: {tier.name}")
+
+    def _rename_tier(self):
+        """Rename the active annotation tier."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            QMessageBox.warning(self, "Rename Tier", "No tiers to rename.")
+            return
+
+        tier = self._annotations.active_tier
+        if tier is None:
+            return
+
+        name, ok = QInputDialog.getText(
+            self, "Rename Tier", "New name:", text=tier.name
+        )
+        if ok and name:
+            old_name = tier.name
+            self._annotations.rename_tier(self._annotations.active_tier_index, name)
+            self._annotation_editor.refresh()
+            self._status_bar.showMessage(f"Renamed tier: {old_name} → {name}")
+
+    def _add_boundary_at_cursor(self):
+        """Add a boundary at the current cursor position."""
+        self._annotation_editor.add_boundary_at_cursor()
+
+    def _remove_nearest_boundary(self):
+        """Remove the boundary nearest to the cursor."""
+        self._annotation_editor.remove_nearest_boundary()
+
+    def _play_interval_at_cursor(self):
+        """Play the interval at the current cursor position."""
+        self._annotation_editor.play_interval_at_cursor()
+
+    def eventFilter(self, obj, event):
+        """Filter events to catch key presses for text input."""
+        if event.type() == QEvent.Type.KeyPress:
+            # Don't intercept if the text editor is active - let it handle input naturally
+            if self._annotation_editor.is_editing_text():
+                # Only handle Escape to close the editor
+                if event.key() == Qt.Key.Key_Escape:
+                    self._annotation_editor._hide_text_editor()
+                    self._annotation_editor.deselect_interval()
+                    return True
+                # Let the QLineEdit handle all other keys
+                return False
+
+            # Check if there's a selected interval but editor not shown yet
+            selected = self._annotation_editor.get_selected_interval()
+            if selected is not None:
+                key = event.key()
+
+                if key == Qt.Key.Key_Escape:
+                    self._annotation_editor.deselect_interval()
+                    return True
+                elif key == Qt.Key.Key_Space:
+                    self._annotation_editor.play_selected_interval()
+                    return True
+
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts."""
-        if event.key() == Qt.Key.Key_Space:
+        key = event.key()
+
+        # Don't handle keys if text editor is active
+        if self._annotation_editor.is_editing_text():
+            super().keyPressEvent(event)
+            return
+
+        # No selected interval or text editor not active - handle global shortcuts
+        if key == Qt.Key.Key_Space:
             self._toggle_playback()
-        elif event.key() == Qt.Key.Key_Escape:
+        elif key == Qt.Key.Key_Escape:
             self._stop_playback()
-        elif event.key() == Qt.Key.Key_Tab:
+        elif key == Qt.Key.Key_Tab:
             # Play visible window
             if self._audio_data:
                 start, end = self._waveform.get_view_range()
@@ -625,5 +996,17 @@ class MainWindow(QMainWindow):
                 self._player.play(start, end)
                 self._playback_timer.start()
                 self._play_btn.setText("❚❚ Pause")
+        elif key == Qt.Key.Key_Left:
+            self._pan_left()
+        elif key == Qt.Key.Key_Right:
+            self._pan_right()
+        elif key == Qt.Key.Key_Z:
+            self._zoom_to_selection()
+        elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+            # Add boundary when no interval is selected
+            self._add_boundary_at_cursor()
+        elif key == Qt.Key.Key_Delete:
+            # Remove boundary
+            self._remove_nearest_boundary()
         else:
             super().keyPressEvent(event)

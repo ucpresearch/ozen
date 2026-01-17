@@ -233,25 +233,64 @@ class WaveformWidget(pg.PlotWidget):
             super().mouseReleaseEvent(ev)
 
     def wheelEvent(self, ev):
-        """Handle scroll wheel for zooming."""
+        """Handle scroll wheel: vertical = zoom, horizontal = pan."""
         if self._audio_data is None:
             return
 
-        # Get current view
         x_min, x_max = self.get_view_range()
-        x_center = (x_min + x_max) / 2
         x_range = x_max - x_min
 
-        # Zoom factor
-        delta = ev.angleDelta().y()
-        if delta > 0:
-            factor = 0.8  # Zoom in
-        else:
-            factor = 1.25  # Zoom out
+        delta_x = ev.angleDelta().x()
+        delta_y = ev.angleDelta().y()
 
-        new_range = x_range * factor
-        new_min = max(0, x_center - new_range / 2)
-        new_max = min(self._audio_data.duration, x_center + new_range / 2)
+        # Horizontal scroll = pan only (no zoom)
+        if delta_x != 0:
+            pan_amount = x_range * 0.05 * (-delta_x / 120.0)
+            new_min = x_min + pan_amount
+            new_max = x_max + pan_amount
 
-        self.setXRange(new_min, new_max, padding=0)
+            # Clamp to audio bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._audio_data.duration:
+                new_min -= (new_max - self._audio_data.duration)
+                new_max = self._audio_data.duration
+                new_min = max(0, new_min)
+
+            self.setXRange(new_min, new_max, padding=0)
+
+        # Vertical scroll = zoom only (slower zoom), centered on mouse position
+        if delta_y != 0 and delta_x == 0:
+            # Get mouse position in view coordinates
+            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            mouse_x = pos.x()
+
+            # Clamp mouse position to valid range
+            mouse_x = max(x_min, min(x_max, mouse_x))
+
+            if delta_y > 0:
+                factor = 0.9  # Zoom in
+            else:
+                factor = 1.1  # Zoom out
+
+            # Calculate new range keeping mouse position fixed
+            # mouse_x should be at the same relative position after zoom
+            left_frac = (mouse_x - x_min) / x_range
+            new_range = x_range * factor
+
+            new_min = mouse_x - left_frac * new_range
+            new_max = mouse_x + (1 - left_frac) * new_range
+
+            # Clamp to audio bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._audio_data.duration:
+                new_min -= (new_max - self._audio_data.duration)
+                new_max = self._audio_data.duration
+                new_min = max(0, new_min)
+
+            self.setXRange(new_min, new_max, padding=0)
+
         ev.accept()

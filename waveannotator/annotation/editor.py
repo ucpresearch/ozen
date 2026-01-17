@@ -1,0 +1,1016 @@
+"""Annotation editor widget for displaying and editing annotation tiers."""
+
+import numpy as np
+import pyqtgraph as pg
+from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF, QLineF
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPolygonF
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLineEdit
+
+from .tier import Tier, Interval, AnnotationSet
+
+
+class TierItem(pg.GraphicsObject):
+    """A single annotation tier displayed as horizontal band with intervals."""
+
+    # Tier height in pixels (approximately)
+    TIER_HEIGHT = 60
+    # Play button size
+    PLAY_BUTTON_HEIGHT = 0.18  # fraction of tier height (Y axis)
+    PLAY_BUTTON_WIDTH = 0.008  # width in seconds (X axis) - about 8ms
+
+    def __init__(self, tier: Tier, y_pos: float, height: float, parent=None):
+        super().__init__(parent)
+        self.tier = tier
+        self._y_pos = y_pos
+        self._height = height
+        self._selected_interval: int | None = None
+        self._hovered_boundary: int | None = None
+        self._hovered_play_button: int | None = None  # interval index of hovered play button
+
+        # Colors
+        self._bg_color = QColor(240, 240, 240)
+        self._border_color = QColor(100, 100, 100)
+        self._boundary_color = QColor(0, 100, 200)
+        self._selected_color = QColor(200, 220, 255)
+        self._text_color = QColor(0, 0, 0)
+        self._label_bg_color = QColor(255, 255, 255, 200)
+        self._play_button_color = QColor(0, 120, 0, 230)  # Dark green for play button
+        self._play_button_hover_color = QColor(0, 180, 0, 255)  # Brighter on hover
+        self._play_button_border_color = QColor(0, 80, 0, 255)  # Border color
+
+        # Text items for interval labels (managed separately)
+        self._text_items: list[pg.TextItem] = []
+        # Text item for tier name
+        self._name_item: pg.TextItem | None = None
+
+    def boundingRect(self) -> QRectF:
+        """Return the bounding rectangle of this tier."""
+        # Use a very wide range for X since we don't know the time extent
+        return QRectF(0, self._y_pos, 100000, self._height)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        """Draw the tier with intervals and boundaries."""
+        if self.tier is None:
+            return
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Get the view's visible range
+        view = self.getViewBox()
+        if view is None:
+            return
+
+        view_range = view.viewRange()
+        x_min, x_max = view_range[0]
+
+        # Draw background
+        rect = QRectF(x_min, self._y_pos, x_max - x_min, self._height)
+        painter.fillRect(rect, self._bg_color)
+
+        # Draw intervals
+        intervals = self.tier.get_intervals()
+        font = QFont("Arial", 9)
+        painter.setFont(font)
+
+        for i, interval in enumerate(intervals):
+            # Skip intervals outside view
+            if interval.end < x_min or interval.start > x_max:
+                continue
+
+            # Interval rectangle
+            int_rect = QRectF(
+                interval.start,
+                self._y_pos,
+                interval.end - interval.start,
+                self._height
+            )
+
+            # Draw selection highlight
+            if i == self._selected_interval:
+                painter.fillRect(int_rect, self._selected_color)
+
+                # Draw play button (triangle) only for selected interval
+                # Button width adapts to zoom level (1% of visible range, min 0.005s, max 0.025s)
+                view_width = x_max - x_min
+                btn_width = max(0.005, min(0.025, view_width * 0.01))
+                btn_height = self._height * self.PLAY_BUTTON_HEIGHT
+                btn_margin_y = btn_height * 0.2
+                btn_margin_x = btn_width * 0.3
+                btn_left = interval.start + btn_margin_x
+                btn_bottom = self._y_pos + btn_margin_y
+                btn_top = btn_bottom + btn_height
+
+                # Only draw if interval is wide enough (at least 2x button width)
+                if interval.end - interval.start > btn_width * 2:
+                    # Create triangle pointing right
+                    triangle = QPolygonF([
+                        QPointF(btn_left, btn_top),
+                        QPointF(btn_left, btn_bottom),
+                        QPointF(btn_left + btn_width, btn_bottom + btn_height / 2),
+                    ])
+
+                    # Use hover color if hovered
+                    if i == self._hovered_play_button:
+                        painter.setBrush(self._play_button_hover_color)
+                    else:
+                        painter.setBrush(self._play_button_color)
+                    # Draw with border for visibility
+                    painter.setPen(pg.mkPen(color=self._play_button_border_color, width=1))
+                    painter.drawPolygon(triangle)
+
+            # Text is drawn using separate TextItems (see update_text_items)
+
+        # Reset brush before drawing other elements
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Draw boundaries
+        painter.setPen(pg.mkPen(color=self._boundary_color, width=2))
+        for i, boundary in enumerate(self.tier.boundaries):
+            if x_min <= boundary <= x_max:
+                # Highlight hovered boundary
+                if i == self._hovered_boundary:
+                    painter.setPen(pg.mkPen(color=(255, 100, 0), width=3))
+                else:
+                    painter.setPen(pg.mkPen(color=self._boundary_color, width=2))
+
+                painter.drawLine(
+                    QPointF(boundary, self._y_pos),
+                    QPointF(boundary, self._y_pos + self._height)
+                )
+
+        # Draw tier border
+        painter.setPen(pg.mkPen(color=self._border_color, width=1))
+        painter.drawRect(rect)
+
+        # Tier name is drawn using TextItem (see update_text_items)
+
+    def set_selected_interval(self, index: int | None):
+        """Set the selected interval."""
+        self._selected_interval = index
+        self.update()
+
+    def set_hovered_boundary(self, index: int | None):
+        """Set the hovered boundary for highlighting."""
+        self._hovered_boundary = index
+        self.update()
+
+    def set_hovered_play_button(self, index: int | None):
+        """Set the hovered play button for highlighting."""
+        self._hovered_play_button = index
+        self.update()
+
+    def get_play_button_at(self, x: float, y: float, view_range: tuple[float, float] = None) -> int | None:
+        """Check if the point (x, y) is over a play button. Returns interval index or None.
+
+        Play button only exists for the selected interval.
+        """
+        if self.tier is None or self._selected_interval is None:
+            return None
+
+        intervals = self.tier.get_intervals()
+        if self._selected_interval >= len(intervals):
+            return None
+
+        interval = intervals[self._selected_interval]
+
+        # Calculate adaptive button width based on view range
+        if view_range:
+            view_width = view_range[1] - view_range[0]
+            btn_width = max(0.005, min(0.025, view_width * 0.01))
+        else:
+            btn_width = self.PLAY_BUTTON_WIDTH
+
+        btn_height = self._height * self.PLAY_BUTTON_HEIGHT
+        btn_margin_y = btn_height * 0.2
+        btn_margin_x = btn_width * 0.3
+
+        # Skip if interval too narrow
+        if interval.end - interval.start <= btn_width * 2:
+            return None
+
+        btn_left = interval.start + btn_margin_x
+        btn_right = btn_left + btn_width
+        btn_bottom = self._y_pos + btn_margin_y
+        btn_top = btn_bottom + btn_height
+
+        if btn_left <= x <= btn_right and btn_bottom <= y <= btn_top:
+            return self._selected_interval
+
+        return None
+
+    def update_text_items(self, plot_widget, view_range=None):
+        """Update text items for interval labels and tier name."""
+        # Remove old text items
+        for item in self._text_items:
+            plot_widget.removeItem(item)
+        self._text_items.clear()
+
+        if self._name_item is not None:
+            plot_widget.removeItem(self._name_item)
+            self._name_item = None
+
+        # Create tier name label at the left edge of visible area
+        if view_range is not None:
+            x_min = view_range[0]
+        else:
+            x_min = 0
+
+        name_item = pg.TextItem(
+            text=self.tier.name,
+            color=(0, 0, 0),
+            anchor=(0, 0.5),  # Left-center anchor
+            fill=pg.mkBrush(255, 255, 255, 200)  # White background
+        )
+        name_item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        name_item.setPos(x_min + 0.01, self._y_pos + self._height - 10)
+        plot_widget.addItem(name_item)
+        self._name_item = name_item
+
+        # Create new text items for each interval with text
+        intervals = self.tier.get_intervals()
+        for i, interval in enumerate(intervals):
+            if interval.text:
+                # Position text at center of interval
+                center_x = (interval.start + interval.end) / 2
+                center_y = self._y_pos + self._height / 2
+
+                text_item = pg.TextItem(
+                    text=interval.text,
+                    color=(0, 0, 0),
+                    anchor=(0.5, 0.5)  # Center anchor
+                )
+                text_item.setPos(center_x, center_y)
+                plot_widget.addItem(text_item)
+                self._text_items.append(text_item)
+
+
+class AnnotationEditorWidget(pg.PlotWidget):
+    """Widget for displaying and editing annotation tiers."""
+
+    # Signals
+    time_range_changed = pyqtSignal(float, float)  # (start, end)
+    cursor_moved = pyqtSignal(float)  # time position
+    selection_changed = pyqtSignal(float, float)  # (start, end)
+    selection_clicked = pyqtSignal()  # emitted when user clicks inside selection
+
+    # Annotation-specific signals
+    boundary_added = pyqtSignal(int, float)  # (tier_index, time)
+    boundary_removed = pyqtSignal(int, int)  # (tier_index, boundary_index)
+    boundary_moved = pyqtSignal(int, int, float)  # (tier_index, boundary_index, new_time)
+    interval_text_changed = pyqtSignal(int, int, str)  # (tier_index, interval_index, text)
+    interval_selected = pyqtSignal(int, int)  # (tier_index, interval_index)
+    interval_play_requested = pyqtSignal(float, float)  # (start, end)
+
+    # Constants
+    TIER_HEIGHT = 60  # pixels per tier
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._annotations: AnnotationSet | None = None
+        self._duration: float = 0.0
+        self._cursor_time: float = 0.0
+        self._selection_start: float | None = None
+        self._selection_end: float | None = None
+        self._is_dragging: bool = False
+        self._dragging_boundary: tuple[int, int] | None = None  # (tier_idx, boundary_idx)
+        self._click_start_pos: float | None = None
+
+        # Selected interval for editing
+        self._selected_tier_idx: int | None = None
+        self._selected_interval_idx: int | None = None
+
+        self._tier_items: list[TierItem] = []
+
+        self._setup_plot()
+        self._setup_cursor()
+        self._setup_selection()
+        self._setup_text_editor()
+
+        # Enable mouse tracking for hover cursor
+        self.setMouseTracking(True)
+
+        # Enable keyboard focus for text input
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def _setup_text_editor(self):
+        """Setup inline text editor for interval labels."""
+        self._text_editor = QLineEdit(self)
+        self._text_editor.setStyleSheet("""
+            QLineEdit {
+                background-color: white;
+                border: 2px solid #0064C8;
+                border-radius: 3px;
+                padding: 2px 5px;
+                font-size: 12px;
+            }
+        """)
+        self._text_editor.hide()
+        self._text_editor.returnPressed.connect(self._on_text_editor_return)
+        self._text_editor.textChanged.connect(self._on_text_editor_changed)
+
+    def _setup_plot(self):
+        """Configure the plot appearance."""
+        self.setBackground('w')
+        self.showGrid(x=True, y=False, alpha=0.2)
+        self.setLabel('bottom', 'Time', units='s')
+
+        # Hide Y axis labels (tiers are labeled internally)
+        self.plotItem.getAxis('left').setWidth(70)
+        self.plotItem.getAxis('left').setStyle(showValues=False)
+        self.plotItem.getAxis('left').setTicks([])
+
+        # Add right axis placeholder for alignment
+        self.plotItem.showAxis('right')
+        self.plotItem.getAxis('right').setWidth(70)
+        self.plotItem.getAxis('right').setStyle(showValues=False)
+        self.plotItem.getAxis('right').setTicks([])
+
+        # Disable default mouse handling
+        self.setMouseEnabled(x=False, y=False)
+        self.plotItem.vb.setDefaultPadding(0)
+
+        # Disable pyqtgraph's menu and keyboard handling so we can handle text input
+        self.plotItem.setMenuEnabled(False)
+        self.plotItem.vb.setMenuEnabled(False)
+        # Disable ViewBox keyboard shortcuts (like 'a' for autorange)
+        self.plotItem.vb.state['enableMenu'] = False
+
+        # Connect view range changes
+        self.sigXRangeChanged.connect(self._on_x_range_changed)
+
+    def _setup_cursor(self):
+        """Setup the playback cursor line."""
+        self._cursor_line = pg.InfiniteLine(
+            pos=0,
+            angle=90,
+            pen=pg.mkPen(color=(200, 0, 0), width=2),
+            movable=False
+        )
+        self.addItem(self._cursor_line)
+
+    def _setup_selection(self):
+        """Setup the selection region."""
+        self._selection_region = pg.LinearRegionItem(
+            values=[0, 0],
+            brush=pg.mkBrush(180, 180, 255, 80),
+            pen=pg.mkPen(color=(80, 80, 180), width=1),
+            movable=True
+        )
+        self._selection_region.hide()
+        self._selection_region.sigRegionChanged.connect(self._on_selection_changed)
+        self.addItem(self._selection_region)
+
+    def set_annotations(self, annotations: AnnotationSet):
+        """Set the annotation set to display."""
+        self._annotations = annotations
+        self._duration = annotations.duration
+        self._rebuild_tier_items()
+        self._update_y_range()
+
+    def set_duration(self, duration: float):
+        """Set the total duration (for display even without annotations)."""
+        self._duration = duration
+        if self._annotations:
+            self._annotations.duration = duration
+        self.setXRange(0, duration, padding=0)
+
+    def _rebuild_tier_items(self):
+        """Rebuild the tier display items."""
+        # Remove old items
+        for item in self._tier_items:
+            self.removeItem(item)
+        self._tier_items.clear()
+
+        if self._annotations is None:
+            return
+
+        # Create new tier items from bottom to top (tier 0 at top)
+        num_tiers = self._annotations.num_tiers
+        for i, tier in enumerate(self._annotations.get_tiers()):
+            y_pos = (num_tiers - 1 - i) * self.TIER_HEIGHT
+            item = TierItem(tier, y_pos, self.TIER_HEIGHT)
+            self._tier_items.append(item)
+            self.addItem(item)
+
+    def _update_y_range(self):
+        """Update the Y axis range based on number of tiers."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            self.setYRange(0, self.TIER_HEIGHT, padding=0)
+        else:
+            total_height = self._annotations.num_tiers * self.TIER_HEIGHT
+            self.setYRange(0, total_height, padding=0.02)
+
+    def refresh(self):
+        """Refresh the display after data changes."""
+        view_range = self.viewRange()[0]  # Get current X range
+        for item in self._tier_items:
+            item.prepareGeometryChange()  # Force geometry update
+            item.update()
+            item.update_text_items(self, view_range)  # Update text labels
+        # Also update the plot widget itself
+        self.viewport().update()
+
+    def set_cursor_position(self, time: float):
+        """Set the playback cursor position."""
+        self._cursor_time = time
+        self._cursor_line.setPos(time)
+
+    def set_selection(self, start: float, end: float):
+        """Set the selection region."""
+        self._selection_start = min(start, end)
+        self._selection_end = max(start, end)
+        self._selection_region.setRegion([self._selection_start, self._selection_end])
+        self._selection_region.show()
+
+    def clear_selection(self):
+        """Clear the selection region."""
+        self._selection_start = None
+        self._selection_end = None
+        self._selection_region.hide()
+
+    def get_selection(self) -> tuple[float, float] | None:
+        """Get current selection or None."""
+        if self._selection_start is not None and self._selection_end is not None:
+            return (self._selection_start, self._selection_end)
+        return None
+
+    def get_view_range(self) -> tuple[float, float]:
+        """Get the current visible time range."""
+        view_range = self.viewRange()
+        return (view_range[0][0], view_range[0][1])
+
+    def set_x_range(self, start: float, end: float):
+        """Set the visible time range."""
+        self.setXRange(start, end, padding=0)
+
+    def _on_x_range_changed(self):
+        """Handle view range changes."""
+        x_range = self.viewRange()[0]
+        self.time_range_changed.emit(x_range[0], x_range[1])
+        # Redraw tier items with new view and update tier names position
+        for item in self._tier_items:
+            item.update()
+            item.update_text_items(self, x_range)
+
+    def _on_selection_changed(self):
+        """Handle selection region changes."""
+        region = self._selection_region.getRegion()
+        self._selection_start = region[0]
+        self._selection_end = region[1]
+        self.selection_changed.emit(region[0], region[1])
+
+    def _get_tier_at_y(self, y: float) -> int | None:
+        """Get the tier index at the given Y position."""
+        if self._annotations is None:
+            return None
+
+        num_tiers = self._annotations.num_tiers
+        tier_idx = num_tiers - 1 - int(y / self.TIER_HEIGHT)
+
+        if 0 <= tier_idx < num_tiers:
+            return tier_idx
+        return None
+
+    def _find_boundary_near(self, tier_idx: int, time: float, tolerance: float = 0.01) -> int | None:
+        """Find boundary index near the given time."""
+        if self._annotations is None:
+            return None
+
+        tier = self._annotations.get_tier(tier_idx)
+        for i, boundary in enumerate(tier.boundaries):
+            if abs(boundary - time) <= tolerance:
+                return i
+        return None
+
+    def mousePressEvent(self, ev):
+        """Handle mouse press - single click selects interval or drags boundary."""
+        if ev.button() == Qt.MouseButton.LeftButton:
+            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            x, y = pos.x(), pos.y()
+            self._click_start_pos = x
+
+            tier_idx = self._get_tier_at_y(y)
+
+            if tier_idx is not None and self._annotations:
+                # Check if clicking on a play button
+                if tier_idx < len(self._tier_items):
+                    view_range = self.get_view_range()
+                    play_btn_interval = self._tier_items[tier_idx].get_play_button_at(x, y, view_range)
+                    if play_btn_interval is not None:
+                        # Play this interval
+                        tier = self._annotations.get_tier(tier_idx)
+                        interval = tier.get_interval(play_btn_interval)
+                        self.interval_play_requested.emit(interval.start, interval.end)
+                        ev.accept()
+                        return
+
+                # Check if clicking near a boundary (for dragging)
+                boundary_idx = self._find_boundary_near(tier_idx, x)
+                if boundary_idx is not None:
+                    self._dragging_boundary = (tier_idx, boundary_idx)
+                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                    ev.accept()
+                    return
+
+                # Single click on tier = select interval
+                tier = self._annotations.get_tier(tier_idx)
+                try:
+                    interval_idx, interval = tier.get_interval_at_time(x)
+
+                    # Clear previous selection
+                    self._clear_interval_selection()
+
+                    # Select this interval
+                    self._selected_tier_idx = tier_idx
+                    self._selected_interval_idx = interval_idx
+
+                    # Highlight in the tier item
+                    if tier_idx < len(self._tier_items):
+                        self._tier_items[tier_idx].set_selected_interval(interval_idx)
+
+                    # Set selection region to match interval
+                    self._selection_start = interval.start
+                    self._selection_end = interval.end
+                    self._selection_region.setRegion([interval.start, interval.end])
+                    self._selection_region.show()
+
+                    # Emit signals
+                    self.interval_selected.emit(tier_idx, interval_idx)
+                    self.selection_changed.emit(interval.start, interval.end)
+
+                    # Show text editor for this interval
+                    self._show_text_editor()
+
+                except ValueError:
+                    pass
+
+            # Update cursor position
+            self._cursor_time = x
+            self._cursor_line.setPos(x)
+            self.cursor_moved.emit(x)
+            ev.accept()
+        else:
+            super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        """Handle mouse move - cursor follows mouse over tiers."""
+        pos = self.plotItem.vb.mapSceneToView(ev.position())
+        x, y = pos.x(), pos.y()
+
+        if self._dragging_boundary is not None:
+            # Dragging a boundary
+            tier_idx, boundary_idx = self._dragging_boundary
+            tier = self._annotations.get_tier(tier_idx)
+
+            if tier.move_boundary(boundary_idx, x):
+                self.refresh()
+                self.boundary_moved.emit(tier_idx, boundary_idx, x)
+
+            # Update cursor position to follow the drag
+            self._cursor_time = x
+            self._cursor_line.setPos(x)
+            self.cursor_moved.emit(x)
+
+            ev.accept()
+            return
+
+        # Update cursor line to follow mouse when hovering over tiers
+        tier_idx = self._get_tier_at_y(y)
+        if tier_idx is not None and self._annotations:
+            # Show cursor at mouse position and notify other widgets
+            self._cursor_time = x
+            self._cursor_line.setPos(x)
+            self.cursor_moved.emit(x)  # Sync cursor with waveform/spectrogram
+
+            # Check for play button hover
+            if tier_idx < len(self._tier_items):
+                view_range = self.get_view_range()
+                play_btn_interval = self._tier_items[tier_idx].get_play_button_at(x, y, view_range)
+                if play_btn_interval is not None:
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                    self._tier_items[tier_idx].set_hovered_play_button(play_btn_interval)
+                    self._tier_items[tier_idx].set_hovered_boundary(None)
+                else:
+                    self._tier_items[tier_idx].set_hovered_play_button(None)
+
+                    # Check for boundary proximity for drag cursor
+                    boundary_idx = self._find_boundary_near(tier_idx, x)
+                    if boundary_idx is not None:
+                        self.setCursor(Qt.CursorShape.SizeHorCursor)
+                        self._tier_items[tier_idx].set_hovered_boundary(boundary_idx)
+                    else:
+                        self.setCursor(Qt.CursorShape.CrossCursor)
+                        self._tier_items[tier_idx].set_hovered_boundary(None)
+
+            # Clear hover state on other tiers
+            for i, item in enumerate(self._tier_items):
+                if i != tier_idx:
+                    item.set_hovered_boundary(None)
+                    item.set_hovered_play_button(None)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            # Clear hovered state on all tiers
+            for item in self._tier_items:
+                item.set_hovered_boundary(None)
+                item.set_hovered_play_button(None)
+
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        """Handle mouse release."""
+        if ev.button() == Qt.MouseButton.LeftButton:
+            if self._dragging_boundary is not None:
+                self._dragging_boundary = None
+                self.setCursor(Qt.CursorShape.CrossCursor)
+                ev.accept()
+                return
+            ev.accept()
+        else:
+            super().mouseReleaseEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev):
+        """Handle double-click to add a boundary."""
+        if ev.button() == Qt.MouseButton.LeftButton:
+            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            x, y = pos.x(), pos.y()
+
+            tier_idx = self._get_tier_at_y(y)
+            if tier_idx is not None and self._annotations:
+                # Double click = add boundary at this position
+                tier = self._annotations.get_tier(tier_idx)
+                try:
+                    tier.add_boundary(x)
+                    self.refresh()
+                    self.boundary_added.emit(tier_idx, x)
+                except ValueError:
+                    pass  # Boundary already exists or outside range
+
+            ev.accept()
+        else:
+            super().mouseDoubleClickEvent(ev)
+
+    def _clear_interval_selection(self):
+        """Clear the currently selected interval."""
+        if self._selected_tier_idx is not None and self._selected_tier_idx < len(self._tier_items):
+            self._tier_items[self._selected_tier_idx].set_selected_interval(None)
+        self._selected_tier_idx = None
+        self._selected_interval_idx = None
+
+    def get_selected_interval(self) -> tuple[int, int, str] | None:
+        """Get the currently selected interval info.
+
+        Returns (tier_idx, interval_idx, current_text) or None.
+        """
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return None
+        if self._annotations is None:
+            return None
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            text = tier.get_interval_text(self._selected_interval_idx)
+            return (self._selected_tier_idx, self._selected_interval_idx, text)
+        except (IndexError, ValueError):
+            return None
+
+    def keyPressEvent(self, ev):
+        """Handle keyboard shortcuts and text input for selected interval."""
+        if self._annotations is None:
+            super().keyPressEvent(ev)
+            return
+
+        # Check if we have a selected interval for text editing
+        if self._selected_tier_idx is not None and self._selected_interval_idx is not None:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            current_text = tier.get_interval_text(self._selected_interval_idx)
+
+            # Handle text input
+            if ev.key() == Qt.Key.Key_Backspace:
+                # Delete last character
+                if current_text:
+                    new_text = current_text[:-1]
+                    tier.set_interval_text(self._selected_interval_idx, new_text)
+                    self.refresh()
+                    self.interval_text_changed.emit(
+                        self._selected_tier_idx, self._selected_interval_idx, new_text
+                    )
+                ev.accept()
+                return
+            elif ev.key() == Qt.Key.Key_Escape:
+                # Deselect interval
+                self._clear_interval_selection()
+                self.clear_selection()
+                self.refresh()
+                ev.accept()
+                return
+            elif ev.key() == Qt.Key.Key_Return or ev.key() == Qt.Key.Key_Enter:
+                # Confirm and deselect
+                self._clear_interval_selection()
+                self.refresh()
+                ev.accept()
+                return
+            elif ev.key() == Qt.Key.Key_Space:
+                # Play the selected interval
+                interval = tier.get_interval(self._selected_interval_idx)
+                self.interval_play_requested.emit(interval.start, interval.end)
+                ev.accept()
+                return
+            elif ev.text() and ev.text().isprintable():
+                # Add character to text
+                new_text = current_text + ev.text()
+                tier.set_interval_text(self._selected_interval_idx, new_text)
+                self.refresh()
+                self.interval_text_changed.emit(
+                    self._selected_tier_idx, self._selected_interval_idx, new_text
+                )
+                ev.accept()
+                return
+
+        # No interval selected - handle other shortcuts
+
+        # Enter/Return - add boundary at cursor (legacy, now single-click does this)
+        if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            tier_idx = self._annotations.active_tier_index
+            if tier_idx < self._annotations.num_tiers:
+                tier = self._annotations.active_tier
+                try:
+                    tier.add_boundary(self._cursor_time)
+                    self.refresh()
+                    self.boundary_added.emit(tier_idx, self._cursor_time)
+                except ValueError:
+                    pass  # Boundary already exists or outside range
+            ev.accept()
+
+        # Delete key - remove boundary near cursor (Backspace is for text editing)
+        elif ev.key() == Qt.Key.Key_Delete:
+            tier_idx = self._annotations.active_tier_index
+            if tier_idx < self._annotations.num_tiers:
+                tier = self._annotations.active_tier
+                boundary_idx, _, _ = tier.find_nearest_boundary(self._cursor_time)
+                if boundary_idx >= 0:
+                    tier.remove_boundary(boundary_idx)
+                    self.refresh()
+                    self.boundary_removed.emit(tier_idx, boundary_idx)
+            ev.accept()
+
+        # Number keys 1-5 - switch active tier
+        elif Qt.Key.Key_1 <= ev.key() <= Qt.Key.Key_5:
+            tier_num = ev.key() - Qt.Key.Key_1
+            if tier_num < self._annotations.num_tiers:
+                self._annotations.active_tier_index = tier_num
+            ev.accept()
+
+        else:
+            super().keyPressEvent(ev)
+
+    def wheelEvent(self, ev):
+        """Handle scroll wheel: vertical = zoom, horizontal = pan."""
+        x_min, x_max = self.get_view_range()
+        x_range = x_max - x_min
+
+        delta_x = ev.angleDelta().x()
+        delta_y = ev.angleDelta().y()
+
+        # Horizontal scroll = pan only (no zoom)
+        if delta_x != 0:
+            pan_amount = x_range * 0.05 * (-delta_x / 120.0)
+            new_min = x_min + pan_amount
+            new_max = x_max + pan_amount
+
+            # Clamp to bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._duration:
+                new_min -= (new_max - self._duration)
+                new_max = self._duration
+                new_min = max(0, new_min)
+
+            self.setXRange(new_min, new_max, padding=0)
+
+        # Vertical scroll = zoom only, centered on mouse position
+        if delta_y != 0 and delta_x == 0:
+            # Get mouse position in view coordinates
+            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            mouse_x = pos.x()
+
+            # Clamp mouse position to valid range
+            mouse_x = max(x_min, min(x_max, mouse_x))
+
+            if delta_y > 0:
+                factor = 0.9  # Zoom in
+            else:
+                factor = 1.1  # Zoom out
+
+            # Calculate new range keeping mouse position fixed
+            left_frac = (mouse_x - x_min) / x_range
+            new_range = x_range * factor
+
+            new_min = mouse_x - left_frac * new_range
+            new_max = mouse_x + (1 - left_frac) * new_range
+
+            # Clamp to bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._duration:
+                new_min -= (new_max - self._duration)
+                new_max = self._duration
+                new_min = max(0, new_min)
+
+            self.setXRange(new_min, new_max, padding=0)
+
+        ev.accept()
+
+    def add_boundary_at_cursor(self):
+        """Add a boundary at the current cursor position."""
+        if self._annotations is None:
+            return
+
+        tier = self._annotations.active_tier
+        if tier is None:
+            return
+
+        try:
+            tier.add_boundary(self._cursor_time)
+            self.refresh()
+            self.boundary_added.emit(
+                self._annotations.active_tier_index,
+                self._cursor_time
+            )
+        except ValueError:
+            pass
+
+    def remove_nearest_boundary(self):
+        """Remove the boundary nearest to the cursor."""
+        if self._annotations is None:
+            return
+
+        tier_idx = self._annotations.active_tier_index
+        tier = self._annotations.active_tier
+        if tier is None:
+            return
+
+        boundary_idx, _, _ = tier.find_nearest_boundary(self._cursor_time)
+        if boundary_idx >= 0:
+            tier.remove_boundary(boundary_idx)
+            self.refresh()
+            self.boundary_removed.emit(tier_idx, boundary_idx)
+
+    def play_interval_at_cursor(self):
+        """Request playback of the interval at the cursor."""
+        if self._annotations is None:
+            return
+
+        tier = self._annotations.active_tier
+        if tier is None:
+            return
+
+        try:
+            _, interval = tier.get_interval_at_time(self._cursor_time)
+            self.interval_play_requested.emit(interval.start, interval.end)
+        except ValueError:
+            pass
+
+    def _show_text_editor(self):
+        """Show the inline text editor for the selected interval."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return
+        if self._annotations is None:
+            return
+
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            interval = tier.get_interval(self._selected_interval_idx)
+            current_text = tier.get_interval_text(self._selected_interval_idx)
+
+            # Get the position in widget coordinates
+            # Map interval center from view coords to widget coords
+            view = self.plotItem.vb
+            center_x = (interval.start + interval.end) / 2
+            tier_y = (self._annotations.num_tiers - 1 - self._selected_tier_idx) * self.TIER_HEIGHT + self.TIER_HEIGHT / 2
+
+            # Map to scene then to widget coordinates
+            scene_pos = view.mapViewToScene(QPointF(center_x, tier_y))
+            widget_pos = self.mapFromScene(scene_pos)
+
+            # Position and show the editor
+            editor_width = 150
+            editor_height = 25
+            self._text_editor.setGeometry(
+                int(widget_pos.x() - editor_width / 2),
+                int(widget_pos.y() - editor_height / 2),
+                editor_width,
+                editor_height
+            )
+            self._text_editor.setText(current_text)
+            self._text_editor.show()
+            self._text_editor.setFocus()
+            self._text_editor.selectAll()
+
+        except (IndexError, ValueError):
+            pass
+
+    def _hide_text_editor(self):
+        """Hide the inline text editor."""
+        self._text_editor.hide()
+
+    def _on_text_editor_return(self):
+        """Handle Enter key in text editor - confirm and close."""
+        self._hide_text_editor()
+        self._clear_interval_selection()
+        self.refresh()
+
+    def _on_text_editor_changed(self, text: str):
+        """Handle text changes in the editor - update interval immediately."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return
+        if self._annotations is None:
+            return
+
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            tier.set_interval_text(self._selected_interval_idx, text)
+            self.refresh()
+            self.interval_text_changed.emit(
+                self._selected_tier_idx, self._selected_interval_idx, text
+            )
+        except (IndexError, ValueError):
+            pass
+
+    def is_editing_text(self) -> bool:
+        """Check if the text editor is currently visible/active."""
+        return self._text_editor.isVisible()
+
+    def add_char_to_selected_interval(self, char: str):
+        """Add a character to the currently selected interval's text."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return False
+        if self._annotations is None:
+            return False
+
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            current_text = tier.get_interval_text(self._selected_interval_idx)
+            new_text = current_text + char
+            tier.set_interval_text(self._selected_interval_idx, new_text)
+            self.refresh()
+            self.interval_text_changed.emit(
+                self._selected_tier_idx, self._selected_interval_idx, new_text
+            )
+            return True
+        except (IndexError, ValueError):
+            return False
+
+    def delete_char_from_selected_interval(self):
+        """Delete the last character from the selected interval's text."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return False
+        if self._annotations is None:
+            return False
+
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            current_text = tier.get_interval_text(self._selected_interval_idx)
+            if current_text:
+                new_text = current_text[:-1]
+                tier.set_interval_text(self._selected_interval_idx, new_text)
+                self.refresh()
+                self.interval_text_changed.emit(
+                    self._selected_tier_idx, self._selected_interval_idx, new_text
+                )
+            return True
+        except (IndexError, ValueError):
+            return False
+
+    def confirm_selected_interval(self):
+        """Confirm editing and deselect the current interval."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return False
+
+        self._hide_text_editor()
+        self._clear_interval_selection()
+        self.refresh()
+        return True
+
+    def deselect_interval(self):
+        """Deselect the current interval and clear selection."""
+        self._hide_text_editor()
+        self._clear_interval_selection()
+        self.clear_selection()
+        self.refresh()
+
+    def play_selected_interval(self):
+        """Play the currently selected interval."""
+        if self._selected_tier_idx is None or self._selected_interval_idx is None:
+            return False
+        if self._annotations is None:
+            return False
+
+        try:
+            tier = self._annotations.get_tier(self._selected_tier_idx)
+            interval = tier.get_interval(self._selected_interval_idx)
+            self.interval_play_requested.emit(interval.start, interval.end)
+            return True
+        except (IndexError, ValueError):
+            return False

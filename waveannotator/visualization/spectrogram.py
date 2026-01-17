@@ -73,6 +73,8 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._spectrogram_data: np.ndarray | None = None
         self._times: np.ndarray | None = None
         self._frequencies: np.ndarray | None = None
+        self._freq_start: float = 0.0  # Start of frequency range
+        self._freq_end: float = 5000.0  # End of frequency range
         self._features: AcousticFeatures | None = None
         self._cursor_time: float = 0.0
         self._duration: float = 0.0
@@ -238,6 +240,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         f_start = frequencies[0] if len(frequencies) > 0 else 0
         f_end = frequencies[-1] if len(frequencies) > 0 else 5000
 
+        # Store frequency range for pitch scaling
+        self._freq_start = f_start
+        self._freq_end = f_end
+
         # The spectrogram data may not start exactly at 0, so we need to adjust
         actual_t_start = times[0] if len(times) > 0 else 0
         t_scale = (t_end - actual_t_start) / max(len(times), 1)
@@ -252,7 +258,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._plot.setXRange(0, t_end, padding=0)
         self._plot.setYRange(f_start, f_end, padding=0)
 
-    def _update_pitch_axis_ticks(self, max_freq: float):
+    def _update_pitch_axis_ticks(self):
         """Update the right axis to show pitch values instead of frequency."""
         # Create tick values at nice pitch intervals
         pitch_ticks = [50, 100, 150, 200, 300, 400, 500, 600, 800]
@@ -260,12 +266,15 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # Convert pitch values to frequency axis positions
         p_min = self._pitch_min
         p_max = self._pitch_max
+        f_start = self._freq_start
+        f_end = self._freq_end
+        freq_range = f_end - f_start
 
         ticks = []
         for pitch in pitch_ticks:
             if p_min <= pitch <= p_max:
-                # Map pitch to frequency axis
-                freq_pos = (pitch - p_min) / (p_max - p_min) * max_freq
+                # Map pitch (p_min to p_max) to frequency axis (f_start to f_end)
+                freq_pos = (pitch - p_min) / (p_max - p_min) * freq_range + f_start
                 ticks.append((freq_pos, str(int(pitch))))
 
         self._pitch_axis.setTicks([ticks])
@@ -293,18 +302,20 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                 p_min = self._pitch_min  # 50 Hz
                 p_max = self._pitch_max  # 800 Hz
 
-                # Scale pitch to full frequency display range
-                max_freq = self._frequencies[-1]
+                # Use stored frequency range for proper scaling
+                f_start = self._freq_start
+                f_end = self._freq_end
+                freq_range = f_end - f_start
 
-                # Map pitch (50-800 Hz) to frequency axis (0 - max_freq)
-                scaled_pitch = (f0_valid - p_min) / (p_max - p_min) * max_freq
+                # Map pitch (50-800 Hz) to frequency axis (f_start - f_end)
+                scaled_pitch = (f0_valid - p_min) / (p_max - p_min) * freq_range + f_start
                 # Clip to valid range
-                scaled_pitch = np.clip(scaled_pitch, 0, max_freq)
+                scaled_pitch = np.clip(scaled_pitch, f_start, f_end)
 
                 self._pitch_curve.setData(times_valid, scaled_pitch)
 
                 # Update right axis tick labels to show pitch values
-                self._update_pitch_axis_ticks(max_freq)
+                self._update_pitch_axis_ticks()
             self._pitch_curve.show()
         else:
             self._pitch_curve.hide()
@@ -312,9 +323,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # Intensity
         if self._track_visibility['intensity'] and self._frequencies is not None:
             valid = ~np.isnan(f.intensity)
-            max_freq = self._frequencies[-1]
-            scaled_intensity = (f.intensity - 30) / 60 * max_freq
-            scaled_intensity = np.clip(scaled_intensity, 0, max_freq)
+            f_start = self._freq_start
+            f_end = self._freq_end
+            freq_range = f_end - f_start
+            scaled_intensity = (f.intensity - 30) / 60 * freq_range + f_start
+            scaled_intensity = np.clip(scaled_intensity, f_start, f_end)
             self._intensity_curve.setData(f.times[valid], scaled_intensity[valid])
             self._intensity_curve.show()
         else:
@@ -371,9 +384,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # HNR
         if self._track_visibility['hnr'] and self._frequencies is not None:
             valid = ~np.isnan(f.hnr)
-            max_freq = self._frequencies[-1]
-            scaled_hnr = (f.hnr + 10) / 50 * max_freq
-            scaled_hnr = np.clip(scaled_hnr, 0, max_freq)
+            f_start = self._freq_start
+            f_end = self._freq_end
+            freq_range = f_end - f_start
+            scaled_hnr = (f.hnr + 10) / 50 * freq_range + f_start
+            scaled_hnr = np.clip(scaled_hnr, f_start, f_end)
             self._hnr_curve.setData(f.times[valid], scaled_hnr[valid])
             self._hnr_curve.show()
         else:
@@ -519,23 +534,64 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             super().mouseReleaseEvent(ev)
 
     def wheelEvent(self, ev):
-        """Handle scroll wheel for zooming."""
+        """Handle scroll wheel: vertical = zoom, horizontal = pan."""
         if self._duration <= 0:
             return
 
         x_min, x_max = self.get_view_range()
-        x_center = (x_min + x_max) / 2
         x_range = x_max - x_min
 
-        delta = ev.angleDelta().y()
-        if delta > 0:
-            factor = 0.8
-        else:
-            factor = 1.25
+        delta_x = ev.angleDelta().x()
+        delta_y = ev.angleDelta().y()
 
-        new_range = x_range * factor
-        new_min = max(0, x_center - new_range / 2)
-        new_max = min(self._duration, x_center + new_range / 2)
+        # Horizontal scroll = pan only (no zoom)
+        if delta_x != 0:
+            pan_amount = x_range * 0.05 * (-delta_x / 120.0)
+            new_min = x_min + pan_amount
+            new_max = x_max + pan_amount
 
-        self._plot.setXRange(new_min, new_max, padding=0)
+            # Clamp to audio bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._duration:
+                new_min -= (new_max - self._duration)
+                new_max = self._duration
+                new_min = max(0, new_min)
+
+            self._plot.setXRange(new_min, new_max, padding=0)
+
+        # Vertical scroll = zoom only, centered on mouse position
+        if delta_y != 0 and delta_x == 0:
+            # Get mouse position in view coordinates
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            view_pos = self._plot.vb.mapSceneToView(scene_pos)
+            mouse_x = view_pos.x()
+
+            # Clamp mouse position to valid range
+            mouse_x = max(x_min, min(x_max, mouse_x))
+
+            if delta_y > 0:
+                factor = 0.9  # Zoom in
+            else:
+                factor = 1.1  # Zoom out
+
+            # Calculate new range keeping mouse position fixed
+            left_frac = (mouse_x - x_min) / x_range
+            new_range = x_range * factor
+
+            new_min = mouse_x - left_frac * new_range
+            new_max = mouse_x + (1 - left_frac) * new_range
+
+            # Clamp to audio bounds
+            if new_min < 0:
+                new_max -= new_min
+                new_min = 0
+            if new_max > self._duration:
+                new_min -= (new_max - self._duration)
+                new_max = self._duration
+                new_min = max(0, new_min)
+
+            self._plot.setXRange(new_min, new_max, padding=0)
+
         ev.accept()
