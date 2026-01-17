@@ -45,33 +45,32 @@ waveannotator/
 ├── waveannotator/
 │   ├── __init__.py
 │   ├── __main__.py          # Entry point
-│   ├── app.py               # Main application window
 │   ├── audio/
 │   │   ├── __init__.py
-│   │   ├── player.py        # Audio playback (sounddevice)
-│   │   └── loader.py        # Audio file loading
+│   │   ├── player.py        # Audio playback (sounddevice) [IMPLEMENTED]
+│   │   └── loader.py        # Audio file loading [IMPLEMENTED]
 │   ├── analysis/
 │   │   ├── __init__.py
-│   │   ├── acoustic.py      # Parselmouth wrapper for core measurements
-│   │   ├── extended.py      # CoG, SNR, nasal ratio calculations
-│   │   └── cache.py         # Caching computed analyses
+│   │   ├── acoustic.py      # Acoustic feature extraction [IMPLEMENTED]
+│   │   ├── extended.py      # Extended measurements [NOT IMPLEMENTED]
+│   │   └── cache.py         # Caching computed analyses [NOT IMPLEMENTED]
 │   ├── visualization/
 │   │   ├── __init__.py
-│   │   ├── waveform.py      # Waveform display widget
-│   │   ├── spectrogram.py   # Spectrogram display widget
-│   │   ├── tracks.py        # Overlay tracks (pitch, formants, etc.)
-│   │   └── timeline.py      # Synchronized time axis
+│   │   ├── waveform.py      # Waveform display widget [IMPLEMENTED]
+│   │   ├── spectrogram.py   # Spectrogram + overlays [IMPLEMENTED]
+│   │   ├── tracks.py        # Overlay tracks [NOT IMPLEMENTED - in spectrogram.py]
+│   │   └── timeline.py      # Synchronized time axis [NOT IMPLEMENTED]
 │   ├── annotation/
 │   │   ├── __init__.py
-│   │   ├── tier.py          # Annotation tier model
-│   │   ├── interval.py      # Interval/point annotations
-│   │   ├── editor.py        # Annotation editing widget
-│   │   └── textgrid.py      # Praat TextGrid import/export
+│   │   ├── tier.py          # Annotation tier model [NOT IMPLEMENTED]
+│   │   ├── interval.py      # Interval/point annotations [NOT IMPLEMENTED]
+│   │   ├── editor.py        # Annotation editing widget [NOT IMPLEMENTED]
+│   │   └── textgrid.py      # Praat TextGrid import/export [NOT IMPLEMENTED]
 │   └── ui/
 │       ├── __init__.py
-│       ├── main_window.py   # Main window layout
-│       ├── toolbar.py       # Playback and tool controls
-│       └── shortcuts.py     # Keyboard shortcuts
+│       ├── main_window.py   # Main window layout [IMPLEMENTED]
+│       ├── toolbar.py       # Playback and tool controls [NOT IMPLEMENTED - in main_window.py]
+│       └── shortcuts.py     # Keyboard shortcuts [NOT IMPLEMENTED - in main_window.py]
 ├── tests/
 ├── requirements.txt
 ├── pyproject.toml
@@ -80,31 +79,41 @@ waveannotator/
 
 ## Core Features
 
-### 1. Acoustic Displays (Synchronized)
+### 1. Acoustic Displays (Synchronized) [IMPLEMENTED]
 All displays share a common time axis and zoom/scroll together:
 
-- **Waveform** - Amplitude over time
-- **Spectrogram** - Time-frequency representation
+- **Waveform** - Amplitude over time (white background, black line, Praat-style)
+- **Spectrogram** - Time-frequency representation (scipy with Gaussian window)
 
-### 2. Overlay Tracks
-Displayed on top of spectrogram (toggleable):
+### 2. Overlay Tracks [IMPLEMENTED]
+Displayed on top of spectrogram (toggleable via checkboxes):
 
-| Track | Source | Notes |
-|-------|--------|-------|
-| Pitch (F0) | parselmouth | Blue line |
-| Intensity | parselmouth | Yellow line |
-| Formants (F1-F4) | parselmouth | Red dots |
-| Formant bandwidths | parselmouth | Displayed alongside formants |
-| Center of Gravity (CoG) | scipy/custom | Spectral centroid per frame |
-| Signal-to-Noise Ratio | custom | Frame-wise SNR estimate |
-| Nasal ratio (A1-P0) | custom | Amplitude difference measure |
+| Track | Source | Status | Notes |
+|-------|--------|--------|-------|
+| Pitch (F0) | parselmouth | ✓ | Blue line, fixed 50-800 Hz range, right Y-axis |
+| Intensity | parselmouth | ✓ | Yellow line, scaled to frequency range |
+| Formants (F1-F4) | parselmouth | ✓ | Red dots, color fades to pink with higher bandwidth |
+| Formant bandwidths | parselmouth | ✓ | Encoded in formant dot color (red=narrow, pink=wide) |
+| Center of Gravity (CoG) | parselmouth | ✓ | Green line |
+| HNR | parselmouth | ✓ | Dark teal dashed line |
+| Spectral tilt | parselmouth | Extracted but not displayed |
+| Nasal murmur ratio | parselmouth | Extracted but not displayed |
 
-### 3. Audio Playback
+### 3. Audio Playback [IMPLEMENTED]
 - Click-and-drag to select region, press Space to play selection
-- Keyboard shortcuts for play/pause/stop
+- Click inside selection to play it
+- Click without drag to move cursor
+- Scroll wheel to zoom
+- Keyboard shortcuts: Space (play/pause), Escape (stop), Tab (play visible)
 - Visual cursor tracking during playback
 
-### 4. Annotation System
+### 4. Control Panel [IMPLEMENTED]
+- Spectrogram: Narrowband/Wideband toggle, colormap selection (grayscale/inferno/viridis)
+- Formants: Voice preset (Female/Male/Child) - affects formant extraction parameters
+- Overlays: Toggle checkboxes for Pitch, Formants, Intensity, CoG, HNR
+- Auto-extract features for files under 60 seconds
+
+### 5. Annotation System [NOT IMPLEMENTED]
 - Multiple annotation tiers (like Praat TextGrids)
 - Interval tiers (segments with start/end) and point tiers
 - Click to add boundaries, double-click to edit labels
@@ -167,12 +176,38 @@ pytest tests/
 ## MVP Milestone
 
 Minimum viable version should support:
-1. [ ] Load and display WAV file (waveform + spectrogram)
-2. [ ] Play audio, play selection
-3. [ ] Display pitch and formants overlay
+1. [x] Load and display audio file (waveform + spectrogram)
+2. [x] Play audio, play selection
+3. [x] Display pitch and formants overlay
 4. [ ] Single annotation tier with interval creation
 5. [ ] Save/load TextGrid
 
+## Current Implementation Notes
+
+### Spectrogram
+- Uses scipy with Gaussian window (similar to Praat's algorithm)
+- High resolution: nfft = nperseg * 4, 95% overlap
+- Narrowband (25ms window) is default, wideband (5ms) available
+- Pre-emphasis filter applied for speech
+
+### Formant Extraction
+- Uses parselmouth (Praat's Burg algorithm)
+- Voice presets affect max_formant and pitch range:
+  - Female: max 5500 Hz, pitch 100-500 Hz
+  - Male: max 5000 Hz, pitch 75-300 Hz
+  - Child: max 8000 Hz, pitch 150-600 Hz
+- Post-processing: frequency range filtering, bandwidth filtering, median smoothing, gap interpolation
+
+### Pitch Display
+- Fixed range 50-800 Hz (Praat-style)
+- Displayed scaled on main plot, right Y-axis shows pitch scale in blue
+
+### Known Issues
+- Spectrogram quality not quite matching Praat (harmonics less clear)
+- Waveform/spectrogram alignment may have minor differences
+
 ## Future Enhancements
 - Batch processing mode
-- Spectrogram style options (narrowband/wideband)
+- Annotation system (TextGrid import/export)
+- Spectrogram computed via Praat for exact match (resolution issues to solve)
+- Additional acoustic measures display
