@@ -126,16 +126,13 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._pitch_min = 50.0
         self._pitch_max = 800.0
 
-        # Create right axis for pitch scale
-        self._pitch_axis = pg.AxisItem('right')
+        # Use the plot's built-in right axis for pitch scale
+        self._plot.showAxis('right')
+        self._pitch_axis = self._plot.getAxis('right')
         self._pitch_axis.setLabel('Pitch (Hz)', color='#0000C8')
         self._pitch_axis.setWidth(70)
         self._pitch_axis.setPen(pg.mkPen(color=(0, 0, 200)))
         self._pitch_axis.setTextPen(pg.mkPen(color=(0, 0, 200)))
-        self.addItem(self._pitch_axis, row=0, col=1)
-
-        # Link to main plot view
-        self._pitch_axis.linkToView(self._plot.vb)
 
     def _setup_spectrogram(self):
         """Setup the spectrogram image item."""
@@ -196,9 +193,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         )
         self._plot.addItem(self._cog_curve)
 
-        # HNR - dark teal/cyan dotted (more visible)
+        # HNR - bright purple dotted
         self._hnr_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(0, 120, 120), width=3, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(color=(180, 0, 220), width=3, style=Qt.PenStyle.DashLine),
             name='HNR'
         )
         self._plot.addItem(self._hnr_curve)
