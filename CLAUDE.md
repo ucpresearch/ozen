@@ -62,10 +62,10 @@ waveannotator/
 │   │   └── timeline.py      # Synchronized time axis [NOT IMPLEMENTED]
 │   ├── annotation/
 │   │   ├── __init__.py
-│   │   ├── tier.py          # Annotation tier model [NOT IMPLEMENTED]
-│   │   ├── interval.py      # Interval/point annotations [NOT IMPLEMENTED]
-│   │   ├── editor.py        # Annotation editing widget [NOT IMPLEMENTED]
-│   │   └── textgrid.py      # Praat TextGrid import/export [NOT IMPLEMENTED]
+│   │   ├── tier.py          # Annotation tier model [IMPLEMENTED]
+│   │   ├── interval.py      # Interval/point annotations [IMPLEMENTED - in tier.py]
+│   │   ├── editor.py        # Annotation editing widget [IMPLEMENTED]
+│   │   └── textgrid.py      # Praat TextGrid import/export [IMPLEMENTED]
 │   └── ui/
 │       ├── __init__.py
 │       ├── main_window.py   # Main window layout [IMPLEMENTED]
@@ -95,7 +95,7 @@ Displayed on top of spectrogram (toggleable via checkboxes):
 | Formants (F1-F4) | parselmouth | ✓ | Red dots, color fades to pink with higher bandwidth |
 | Formant bandwidths | parselmouth | ✓ | Encoded in formant dot color (red=narrow, pink=wide) |
 | Center of Gravity (CoG) | parselmouth | ✓ | Green line |
-| HNR | parselmouth | ✓ | Dark teal dashed line |
+| HNR | parselmouth | ✓ | Bright purple dashed line |
 | Spectral tilt | parselmouth | Extracted but not displayed |
 | Nasal murmur ratio | parselmouth | Extracted but not displayed |
 
@@ -113,25 +113,32 @@ Displayed on top of spectrogram (toggleable via checkboxes):
 - Overlays: Toggle checkboxes for Pitch, Formants, Intensity, CoG, HNR
 - Auto-extract features for files under 60 seconds
 
-### 5. Annotation System [NOT IMPLEMENTED]
+### 5. Annotation System [IMPLEMENTED]
 - Multiple annotation tiers (like Praat TextGrids)
-- Interval tiers (segments with start/end) and point tiers
-- Click to add boundaries, double-click to edit labels
+- Interval tiers with boundaries and labels
+- Double-click to add boundaries, click to select intervals
+- Inline text editor for interval labels
+- Boundary snapping to upper tier boundaries (15ms threshold)
+- Interval duration display
+- Play button on selected intervals
 - Import/export Praat TextGrid format (.TextGrid)
-- Export to CSV for analysis pipelines
+- Undo support (Ctrl+Z) for add/delete boundary and text changes
+- Command-line options: `--tiers` to create predefined tiers, TextGrid file as argument
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
 | Space | Play selection / pause |
-| Escape | Stop playback |
+| Escape | Stop playback / deselect interval |
 | Tab | Play visible window |
-| Ctrl+Scroll | Zoom in/out |
-| Shift+Drag | Pan view |
-| Enter | Add interval boundary at cursor |
-| Backspace | Delete selected annotation |
-| 1-9 | Switch to annotation tier 1-9 |
+| Scroll wheel | Zoom in/out (centered on cursor) |
+| Horizontal scroll | Pan view |
+| Double-click | Add boundary at position |
+| Enter | Add boundary at cursor position |
+| Delete | Delete hovered boundary (highlighted in orange) |
+| Ctrl+Z | Undo (add/delete boundary, text changes) |
+| 1-5 | Switch to annotation tier 1-5 |
 | Ctrl+S | Save annotations |
 | Ctrl+O | Open audio file |
 
@@ -179,8 +186,8 @@ Minimum viable version should support:
 1. [x] Load and display audio file (waveform + spectrogram)
 2. [x] Play audio, play selection
 3. [x] Display pitch and formants overlay
-4. [ ] Single annotation tier with interval creation
-5. [ ] Save/load TextGrid
+4. [x] Single annotation tier with interval creation
+5. [x] Save/load TextGrid
 
 ## Current Implementation Notes
 
@@ -208,6 +215,7 @@ Minimum viable version should support:
 
 ## Future Enhancements
 - Batch processing mode
-- Annotation system (TextGrid import/export)
+- Point tiers (in addition to interval tiers)
+- Export annotations to CSV
 - Spectrogram computed via Praat for exact match (resolution issues to solve)
-- Additional acoustic measures display
+- Additional acoustic measures display (spectral tilt, nasal ratio)

@@ -785,7 +785,7 @@ class MainWindow(QMainWindow):
         self._waveform.setXRange(start - padding, end + padding)
 
     def _import_textgrid(self):
-        """Import annotations from a TextGrid file."""
+        """Import annotations from a TextGrid file (via dialog)."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Import TextGrid",
@@ -793,16 +793,33 @@ class MainWindow(QMainWindow):
             "TextGrid Files (*.TextGrid *.textgrid);;All Files (*)"
         )
         if file_path:
-            try:
-                self._annotations = read_textgrid(file_path)
-                if self._audio_data:
-                    self._annotations.duration = self._audio_data.duration
-                self._annotation_editor.set_annotations(self._annotations)
-                self._status_bar.showMessage(
-                    f"Imported {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
-                )
-            except Exception as e:
-                QMessageBox.critical(self, "Import Error", f"Failed to import TextGrid: {e}")
+            self._import_textgrid_file(file_path)
+
+    def _import_textgrid_file(self, file_path: str):
+        """Import annotations from a TextGrid file path."""
+        try:
+            self._annotations = read_textgrid(file_path)
+            if self._audio_data:
+                self._annotations.duration = self._audio_data.duration
+            self._annotation_editor.set_annotations(self._annotations)
+            self._status_bar.showMessage(
+                f"Imported {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import TextGrid: {e}")
+
+    def _create_predefined_tiers(self, tier_names: list[str]):
+        """Create annotation tiers with predefined names."""
+        if self._audio_data is None:
+            return
+
+        self._annotations = AnnotationSet(duration=self._audio_data.duration)
+        for name in tier_names:
+            self._annotations.add_tier(name)
+        self._annotation_editor.set_annotations(self._annotations)
+        self._status_bar.showMessage(
+            f"Created {len(tier_names)} tier(s): {', '.join(tier_names)}"
+        )
 
     def _export_textgrid(self):
         """Export annotations to a TextGrid file."""

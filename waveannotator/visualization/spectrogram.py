@@ -3,7 +3,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor, QTransform
+from PyQt6.QtGui import QColor, QTransform, QFont
 
 from ..analysis.acoustic import AcousticFeatures
 
@@ -99,6 +99,21 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._setup_overlays()
         self._setup_selection()
         self._setup_cursor()
+        self._setup_tooltip()
+
+    def _setup_tooltip(self):
+        """Setup tooltip for showing acoustic values."""
+        self.setMouseTracking(True)
+        # Create a text item for displaying values (more visible than tooltip)
+        self._info_label = pg.TextItem(
+            text="",
+            color=(0, 0, 0),
+            anchor=(0, 0),
+            fill=pg.mkBrush(255, 255, 255, 200)
+        )
+        self._info_label.setFont(QFont("Monospace", 8))
+        self._info_label.hide()
+        self._plot.addItem(self._info_label)
 
     def _setup_layout(self):
         """Setup the graphics layout (Praat-like white background)."""
@@ -476,11 +491,17 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        """Handle mouse move for selection."""
+        """Handle mouse move for selection and info display."""
+        scene_pos = self.mapToScene(ev.position().toPoint())
+        view_pos = self._plot.vb.mapSceneToView(scene_pos)
+        x, y = view_pos.x(), view_pos.y()
+
+        # Update info label with acoustic values
+        if self._features is not None:
+            self._update_info_label(x, y)
+
         if self._is_dragging and self._selection_start is not None:
-            scene_pos = self.mapToScene(ev.position().toPoint())
-            view_pos = self._plot.vb.mapSceneToView(scene_pos)
-            self._selection_region.setRegion([self._selection_start, view_pos.x()])
+            self._selection_region.setRegion([self._selection_start, x])
             ev.accept()
         else:
             super().mouseMoveEvent(ev)
@@ -592,3 +613,69 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             self._plot.setXRange(new_min, new_max, padding=0)
 
         ev.accept()
+
+    def _get_acoustic_values_at_time(self, time: float) -> dict:
+        """Get acoustic feature values at a specific time."""
+        values = {}
+
+        if self._features is None or self._times is None:
+            return values
+
+        f = self._features
+
+        # Find the nearest time index
+        time_idx = np.searchsorted(f.times, time)
+        if time_idx >= len(f.times):
+            time_idx = len(f.times) - 1
+        if time_idx > 0 and abs(f.times[time_idx - 1] - time) < abs(f.times[time_idx] - time):
+            time_idx -= 1
+
+        # Get values if within reasonable range
+        if abs(f.times[time_idx] - time) < 0.05:  # Within 50ms
+            # Pitch
+            if not np.isnan(f.f0[time_idx]):
+                values['Pitch'] = f"{f.f0[time_idx]:.1f} Hz"
+
+            # Intensity
+            if not np.isnan(f.intensity[time_idx]):
+                values['Intensity'] = f"{f.intensity[time_idx]:.1f} dB"
+
+            # Formants
+            for key in ['F1', 'F2', 'F3', 'F4']:
+                if key in f.formants and not np.isnan(f.formants[key][time_idx]):
+                    values[key] = f"{f.formants[key][time_idx]:.0f} Hz"
+
+            # HNR
+            if not np.isnan(f.hnr[time_idx]):
+                values['HNR'] = f"{f.hnr[time_idx]:.1f} dB"
+
+            # CoG
+            if not np.isnan(f.cog[time_idx]):
+                values['CoG'] = f"{f.cog[time_idx]:.0f} Hz"
+
+        return values
+
+    def _update_info_label(self, time: float, freq: float):
+        """Update the info label with acoustic values."""
+        lines = [f"Time: {time:.3f}s", f"Freq: {freq:.0f} Hz"]
+
+        values = self._get_acoustic_values_at_time(time)
+        for key, val in values.items():
+            lines.append(f"{key}: {val}")
+
+        if len(lines) > 2:  # Only show if we have acoustic data
+            self._info_label.setText("\n".join(lines))
+            # Position in top-right of view
+            view_range = self._plot.viewRange()
+            x_max = view_range[0][1]
+            y_max = view_range[1][1]
+            self._info_label.setPos(x_max, y_max)
+            self._info_label.setAnchor((1, 0))  # Right-top anchor
+            self._info_label.show()
+        else:
+            self._info_label.hide()
+
+    def leaveEvent(self, ev):
+        """Hide info label when mouse leaves widget."""
+        self._info_label.hide()
+        super().leaveEvent(ev)

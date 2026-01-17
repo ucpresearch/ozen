@@ -40,6 +40,8 @@ class TierItem(pg.GraphicsObject):
 
         # Text items for interval labels (managed separately)
         self._text_items: list[pg.TextItem] = []
+        # Text items for interval durations
+        self._duration_items: list[pg.TextItem] = []
         # Text item for tier name
         self._name_item: pg.TextItem | None = None
 
@@ -199,11 +201,15 @@ class TierItem(pg.GraphicsObject):
         return None
 
     def update_text_items(self, plot_widget, view_range=None):
-        """Update text items for interval labels and tier name."""
+        """Update text items for interval labels, durations, and tier name."""
         # Remove old text items
         for item in self._text_items:
             plot_widget.removeItem(item)
         self._text_items.clear()
+
+        for item in self._duration_items:
+            plot_widget.removeItem(item)
+        self._duration_items.clear()
 
         if self._name_item is not None:
             plot_widget.removeItem(self._name_item)
@@ -212,8 +218,10 @@ class TierItem(pg.GraphicsObject):
         # Create tier name label at the left edge of visible area
         if view_range is not None:
             x_min = view_range[0]
+            x_max = view_range[1]
         else:
             x_min = 0
+            x_max = 1000
 
         name_item = pg.TextItem(
             text=self.tier.name,
@@ -226,14 +234,18 @@ class TierItem(pg.GraphicsObject):
         plot_widget.addItem(name_item)
         self._name_item = name_item
 
-        # Create new text items for each interval with text
+        # Create text items for each interval
         intervals = self.tier.get_intervals()
         for i, interval in enumerate(intervals):
-            if interval.text:
-                # Position text at center of interval
-                center_x = (interval.start + interval.end) / 2
-                center_y = self._y_pos + self._height / 2
+            # Skip intervals outside view
+            if interval.end < x_min or interval.start > x_max:
+                continue
 
+            center_x = (interval.start + interval.end) / 2
+
+            # Interval label (center)
+            if interval.text:
+                center_y = self._y_pos + self._height / 2
                 text_item = pg.TextItem(
                     text=interval.text,
                     color=(0, 0, 0),
@@ -242,6 +254,20 @@ class TierItem(pg.GraphicsObject):
                 text_item.setPos(center_x, center_y)
                 plot_widget.addItem(text_item)
                 self._text_items.append(text_item)
+
+            # Duration label (bottom) - small gray text
+            duration = interval.end - interval.start
+            if duration >= 0.01:  # Only show if >= 10ms
+                duration_text = f"{duration*1000:.0f}ms" if duration < 1 else f"{duration:.2f}s"
+                duration_item = pg.TextItem(
+                    text=duration_text,
+                    color=(120, 120, 120),  # Gray
+                    anchor=(0.5, 1.0)  # Bottom-center anchor
+                )
+                duration_item.setFont(QFont("Arial", 7))
+                duration_item.setPos(center_x, self._y_pos + 8)
+                plot_widget.addItem(duration_item)
+                self._duration_items.append(duration_item)
 
 
 class AnnotationEditorWidget(pg.PlotWidget):
@@ -280,6 +306,10 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self._selected_tier_idx: int | None = None
         self._selected_interval_idx: int | None = None
 
+        # Currently hovered tier and boundary (for keyboard operations like Delete)
+        self._hovered_tier_idx: int | None = None
+        self._hovered_boundary_idx: int | None = None
+
         self._tier_items: list[TierItem] = []
 
         self._setup_plot()
@@ -292,6 +322,19 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
         # Enable keyboard focus for text input
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # Flag to prevent Enter from adding boundary after text editor closes
+        self._ignore_next_enter = False
+
+        # Undo stack: list of (action_type, tier_idx, data) tuples
+        # action_type: 'add_boundary', 'remove_boundary', 'set_text'
+        self._undo_stack: list[tuple] = []
+        self._max_undo = 100  # Maximum number of undo steps
+
+        # Track original text when editing starts (for undo)
+        self._text_edit_original: str | None = None
+        self._text_edit_tier_idx: int | None = None
+        self._text_edit_interval_idx: int | None = None
 
     def _setup_text_editor(self):
         """Setup inline text editor for interval labels."""
@@ -472,6 +515,27 @@ class AnnotationEditorWidget(pg.PlotWidget):
             return tier_idx
         return None
 
+    # Snap-to-grid constants
+    SNAP_THRESHOLD = 0.015  # 15ms snap threshold
+
+    def _get_snap_position(self, tier_idx: int, time: float) -> float:
+        """Get snapped position if near a boundary in upper tiers.
+
+        Returns the snapped time if within threshold of an upper tier boundary,
+        otherwise returns the original time.
+        """
+        if self._annotations is None or tier_idx <= 0:
+            return time
+
+        # Check boundaries in all upper tiers (lower indices)
+        for upper_idx in range(tier_idx):
+            upper_tier = self._annotations.get_tier(upper_idx)
+            for boundary in upper_tier.boundaries:
+                if abs(boundary - time) <= self.SNAP_THRESHOLD:
+                    return boundary
+
+        return time
+
     def _find_boundary_near(self, tier_idx: int, time: float, tolerance: float = 0.01) -> int | None:
         """Find boundary index near the given time."""
         if self._annotations is None:
@@ -563,7 +627,10 @@ class AnnotationEditorWidget(pg.PlotWidget):
             tier_idx, boundary_idx = self._dragging_boundary
             tier = self._annotations.get_tier(tier_idx)
 
-            if tier.move_boundary(boundary_idx, x):
+            # Snap to upper tier boundaries if close
+            snapped_x = self._get_snap_position(tier_idx, x)
+
+            if tier.move_boundary(boundary_idx, snapped_x):
                 self.refresh()
                 self.boundary_moved.emit(tier_idx, boundary_idx, x)
 
@@ -589,6 +656,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
         # Update cursor line to follow mouse when hovering over tiers
         tier_idx = self._get_tier_at_y(y)
+        self._hovered_tier_idx = tier_idx  # Track hovered tier for keyboard operations
         if tier_idx is not None and self._annotations:
             # Show cursor at mouse position and notify other widgets
             self._cursor_time = x
@@ -603,6 +671,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
                     self.setCursor(Qt.CursorShape.PointingHandCursor)
                     self._tier_items[tier_idx].set_hovered_play_button(play_btn_interval)
                     self._tier_items[tier_idx].set_hovered_boundary(None)
+                    self._hovered_boundary_idx = None
                 else:
                     self._tier_items[tier_idx].set_hovered_play_button(None)
 
@@ -611,9 +680,11 @@ class AnnotationEditorWidget(pg.PlotWidget):
                     if boundary_idx is not None:
                         self.setCursor(Qt.CursorShape.SizeHorCursor)
                         self._tier_items[tier_idx].set_hovered_boundary(boundary_idx)
+                        self._hovered_boundary_idx = boundary_idx
                     else:
                         self.setCursor(Qt.CursorShape.CrossCursor)
                         self._tier_items[tier_idx].set_hovered_boundary(None)
+                        self._hovered_boundary_idx = None
 
             # Clear hover state on other tiers
             for i, item in enumerate(self._tier_items):
@@ -622,6 +693,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
                     item.set_hovered_play_button(None)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._hovered_boundary_idx = None
             # Clear hovered state on all tiers
             for item in self._tier_items:
                 item.set_hovered_boundary(None)
@@ -641,6 +713,11 @@ class AnnotationEditorWidget(pg.PlotWidget):
         else:
             super().mouseReleaseEvent(ev)
 
+    def enterEvent(self, ev):
+        """Grab focus when mouse enters so keyboard shortcuts work."""
+        self.setFocus()
+        super().enterEvent(ev)
+
     def mouseDoubleClickEvent(self, ev):
         """Handle double-click to add a boundary."""
         if ev.button() == Qt.MouseButton.LeftButton:
@@ -651,16 +728,21 @@ class AnnotationEditorWidget(pg.PlotWidget):
             if tier_idx is not None and self._annotations:
                 # Double click = add boundary at this position
                 tier = self._annotations.get_tier(tier_idx)
+
+                # Snap to upper tier boundaries if close
+                snapped_x = self._get_snap_position(tier_idx, x)
+
                 try:
-                    tier.add_boundary(x)
+                    tier.add_boundary(snapped_x)
+                    self._push_undo('add_boundary', tier_idx, snapped_x)
                     self.refresh()
-                    self.boundary_added.emit(tier_idx, x)
+                    self.boundary_added.emit(tier_idx, snapped_x)
 
                     # Update selection to the interval at the click position
                     # (the interval that was split now has new bounds)
                     if self._selected_tier_idx == tier_idx:
                         try:
-                            interval_idx, interval = tier.get_interval_at_time(x)
+                            interval_idx, interval = tier.get_interval_at_time(snapped_x)
                             self._selected_interval_idx = interval_idx
                             self._selection_start = interval.start
                             self._selection_end = interval.end
@@ -706,9 +788,42 @@ class AnnotationEditorWidget(pg.PlotWidget):
             super().keyPressEvent(ev)
             return
 
+        # Handle Ctrl+Z for undo (works even when text editor is active)
+        if ev.key() == Qt.Key.Key_Z and ev.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self.undo()
+            ev.accept()
+            return
+
+        # If text editor is active, let it handle the event (don't add boundaries etc.)
+        if self.is_editing_text():
+            # Handle Escape to close editor
+            if ev.key() == Qt.Key.Key_Escape:
+                self._hide_text_editor()
+                self._clear_interval_selection()
+                self.clear_selection()
+                self.refresh()
+                ev.accept()
+                return
+            # Handle Delete to remove hovered boundary (even while editing text)
+            if ev.key() == Qt.Key.Key_Delete and self._hovered_boundary_idx is not None:
+                self._delete_hovered_boundary()
+                ev.accept()
+                return
+            # All other keys are handled by the QLineEdit
+            return
+
         # Check if we have a selected interval for text editing
         if self._selected_tier_idx is not None and self._selected_interval_idx is not None:
             tier = self._annotations.get_tier(self._selected_tier_idx)
+            # Validate that the selected interval still exists
+            intervals = tier.get_intervals()
+            if self._selected_interval_idx >= len(intervals):
+                # Selection is invalid, clear it
+                self._clear_interval_selection()
+                self.clear_selection()
+                self.refresh()
+                super().keyPressEvent(ev)
+                return
             current_text = tier.get_interval_text(self._selected_interval_idx)
 
             # Handle text input
@@ -755,29 +870,37 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
         # No interval selected - handle other shortcuts
 
-        # Enter/Return - add boundary at cursor (legacy, now single-click does this)
+        # Enter/Return - add boundary at cursor (legacy, now double-click does this)
         if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            tier_idx = self._annotations.active_tier_index
-            if tier_idx < self._annotations.num_tiers:
-                tier = self._annotations.active_tier
+            # Check if we should ignore this Enter (from text editor closing)
+            if self._ignore_next_enter:
+                self._ignore_next_enter = False
+                ev.accept()
+                return
+            # Use hovered tier (where mouse is), then selected tier, then active tier
+            if self._hovered_tier_idx is not None:
+                tier_idx = self._hovered_tier_idx
+            elif self._selected_tier_idx is not None:
+                tier_idx = self._selected_tier_idx
+            else:
+                tier_idx = self._annotations.active_tier_index
+
+            if tier_idx is not None and tier_idx < self._annotations.num_tiers:
+                tier = self._annotations.get_tier(tier_idx)
+                # Snap to upper tier boundaries if close
+                snapped_time = self._get_snap_position(tier_idx, self._cursor_time)
                 try:
-                    tier.add_boundary(self._cursor_time)
+                    tier.add_boundary(snapped_time)
+                    self._push_undo('add_boundary', tier_idx, snapped_time)
                     self.refresh()
-                    self.boundary_added.emit(tier_idx, self._cursor_time)
+                    self.boundary_added.emit(tier_idx, snapped_time)
                 except ValueError:
                     pass  # Boundary already exists or outside range
             ev.accept()
 
-        # Delete key - remove boundary near cursor (Backspace is for text editing)
+        # Delete key - remove the hovered boundary (the one that's highlighted)
         elif ev.key() == Qt.Key.Key_Delete:
-            tier_idx = self._annotations.active_tier_index
-            if tier_idx < self._annotations.num_tiers:
-                tier = self._annotations.active_tier
-                boundary_idx, _, _ = tier.find_nearest_boundary(self._cursor_time)
-                if boundary_idx >= 0:
-                    tier.remove_boundary(boundary_idx)
-                    self.refresh()
-                    self.boundary_removed.emit(tier_idx, boundary_idx)
+            self._delete_hovered_boundary()
             ev.accept()
 
         # Number keys 1-5 - switch active tier
@@ -860,6 +983,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
         try:
             tier.add_boundary(self._cursor_time)
+            self._push_undo('add_boundary', self._annotations.active_tier_index, self._cursor_time)
             self.refresh()
             self.boundary_added.emit(
                 self._annotations.active_tier_index,
@@ -883,6 +1007,83 @@ class AnnotationEditorWidget(pg.PlotWidget):
             tier.remove_boundary(boundary_idx)
             self.refresh()
             self.boundary_removed.emit(tier_idx, boundary_idx)
+
+    def _delete_hovered_boundary(self):
+        """Delete the currently hovered boundary (highlighted in orange)."""
+        if self._annotations is None:
+            return False
+
+        if (self._hovered_tier_idx is None or
+            self._hovered_boundary_idx is None or
+            self._hovered_tier_idx >= self._annotations.num_tiers):
+            return False
+
+        tier_idx = self._hovered_tier_idx
+        boundary_idx = self._hovered_boundary_idx
+        tier = self._annotations.get_tier(tier_idx)
+        # Save boundary time before removing for undo
+        boundary_time = tier.boundaries[boundary_idx]
+        tier.remove_boundary(boundary_idx)
+        self._push_undo('remove_boundary', tier_idx, boundary_time)
+
+        # Clear the hover state since boundary is gone
+        self._hovered_boundary_idx = None
+        if tier_idx < len(self._tier_items):
+            self._tier_items[tier_idx].set_hovered_boundary(None)
+
+        # Clear selection since interval bounds changed
+        self._clear_interval_selection()
+        self.clear_selection()
+        self.refresh()
+        self.boundary_removed.emit(tier_idx, boundary_idx)
+        return True
+
+    def _push_undo(self, action_type: str, tier_idx: int, data):
+        """Push an action to the undo stack."""
+        self._undo_stack.append((action_type, tier_idx, data))
+        # Limit stack size
+        if len(self._undo_stack) > self._max_undo:
+            self._undo_stack.pop(0)
+
+    def undo(self) -> bool:
+        """Undo the last action. Returns True if an action was undone."""
+        if not self._undo_stack or self._annotations is None:
+            return False
+
+        action_type, tier_idx, data = self._undo_stack.pop()
+        tier = self._annotations.get_tier(tier_idx)
+
+        if action_type == 'add_boundary':
+            # Undo add boundary = remove it
+            boundary_time = data
+            # Find the boundary index
+            for i, b in enumerate(tier.boundaries):
+                if abs(b - boundary_time) < 0.001:
+                    tier.remove_boundary(i)
+                    break
+
+        elif action_type == 'remove_boundary':
+            # Undo remove boundary = add it back
+            boundary_time = data
+            try:
+                tier.add_boundary(boundary_time)
+            except ValueError:
+                pass  # Boundary might already exist
+
+        elif action_type == 'set_text':
+            # Undo text change = restore old text
+            interval_idx, old_text = data
+            try:
+                tier.set_interval_text(interval_idx, old_text)
+            except (IndexError, ValueError):
+                pass  # Interval might not exist anymore
+
+        # Clear selection and refresh
+        self._clear_interval_selection()
+        self.clear_selection()
+        self._hide_text_editor()
+        self.refresh()
+        return True
 
     def play_interval_at_cursor(self):
         """Request playback of the interval at the cursor."""
@@ -910,6 +1111,11 @@ class AnnotationEditorWidget(pg.PlotWidget):
             tier = self._annotations.get_tier(self._selected_tier_idx)
             interval = tier.get_interval(self._selected_interval_idx)
             current_text = tier.get_interval_text(self._selected_interval_idx)
+
+            # Save original text for undo
+            self._text_edit_original = current_text
+            self._text_edit_tier_idx = self._selected_tier_idx
+            self._text_edit_interval_idx = self._selected_interval_idx
 
             # Get the position in widget coordinates
             # Map interval center from view coords to widget coords
@@ -939,14 +1145,36 @@ class AnnotationEditorWidget(pg.PlotWidget):
             pass
 
     def _hide_text_editor(self):
-        """Hide the inline text editor."""
+        """Hide the inline text editor and restore focus to main widget."""
+        # Check if text changed and push to undo stack
+        if (self._text_edit_original is not None and
+            self._text_edit_tier_idx is not None and
+            self._text_edit_interval_idx is not None and
+            self._annotations is not None):
+            try:
+                tier = self._annotations.get_tier(self._text_edit_tier_idx)
+                current_text = tier.get_interval_text(self._text_edit_interval_idx)
+                if current_text != self._text_edit_original:
+                    self._push_undo('set_text', self._text_edit_tier_idx,
+                                   (self._text_edit_interval_idx, self._text_edit_original))
+            except (IndexError, ValueError):
+                pass
+
+        # Clear the tracking variables
+        self._text_edit_original = None
+        self._text_edit_tier_idx = None
+        self._text_edit_interval_idx = None
+
         self._text_editor.hide()
+        self.setFocus()  # Restore keyboard focus to the annotation editor
 
     def _on_text_editor_return(self):
         """Handle Enter key in text editor - confirm and close."""
         self._hide_text_editor()
         self._clear_interval_selection()
         self.refresh()
+        # Prevent the Enter key from also adding a boundary
+        self._ignore_next_enter = True
 
     def _on_text_editor_changed(self, text: str):
         """Handle text changes in the editor - update interval immediately."""
