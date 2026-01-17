@@ -124,6 +124,8 @@ Displayed on top of spectrogram (toggleable via checkboxes):
 - Import/export Praat TextGrid format (.TextGrid)
 - Undo support (Ctrl+Z) for add/delete boundary and text changes
 - Command-line options: `--tiers` to create predefined tiers, TextGrid file as argument
+- Save system: Ctrl+S saves to current path, auto-save every 60s, exit confirmation for unsaved changes
+- Non-existing TextGrid paths prompt for creation at startup
 
 ## Keyboard Shortcuts
 

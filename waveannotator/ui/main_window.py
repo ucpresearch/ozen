@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Optional
 import traceback
+import tempfile
+import os
 
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMetaObject, Q_ARG, Qt as QtCore, QEvent
 from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent
@@ -76,6 +78,10 @@ class MainWindow(QMainWindow):
         self._feature_thread: FeatureExtractionThread | None = None
         self._annotations: AnnotationSet | None = None
 
+        # Save state tracking
+        self._textgrid_path: str | None = None  # Current TextGrid save path
+        self._is_dirty: bool = False  # True if unsaved changes exist
+
         self._setup_ui()
         self._setup_menus()
         self._setup_toolbar()
@@ -89,6 +95,11 @@ class MainWindow(QMainWindow):
 
         # Connect playback finished signal (for thread-safe callback)
         self._playback_finished_signal.connect(self._on_playback_finished)
+
+        # Auto-save timer (every 60 seconds)
+        self._autosave_timer = QTimer()
+        self._autosave_timer.setInterval(60000)  # 60 seconds
+        self._autosave_timer.timeout.connect(self._auto_save)
 
         # Install event filter to catch key events for text input
         self.installEventFilter(self)
@@ -235,15 +246,20 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        # Annotation import/export
-        import_textgrid = QAction("Import &TextGrid...", self)
+        # Annotation save/load
+        import_textgrid = QAction("&Open TextGrid...", self)
         import_textgrid.triggered.connect(self._import_textgrid)
         file_menu.addAction(import_textgrid)
 
-        export_textgrid = QAction("Export Text&Grid...", self)
-        export_textgrid.setShortcut(QKeySequence.StandardKey.Save)
-        export_textgrid.triggered.connect(self._export_textgrid)
-        file_menu.addAction(export_textgrid)
+        save_textgrid = QAction("&Save", self)
+        save_textgrid.setShortcut(QKeySequence.StandardKey.Save)
+        save_textgrid.triggered.connect(self._save_textgrid)
+        file_menu.addAction(save_textgrid)
+
+        save_textgrid_as = QAction("Save &As...", self)
+        save_textgrid_as.setShortcut("Ctrl+Shift+S")
+        save_textgrid_as.triggered.connect(self._save_textgrid_as)
+        file_menu.addAction(save_textgrid_as)
 
         file_menu.addSeparator()
 
@@ -251,7 +267,7 @@ class MainWindow(QMainWindow):
         import_tsv.triggered.connect(self._import_tsv)
         file_menu.addAction(import_tsv)
 
-        export_tsv = QAction("Export &TSV...", self)
+        export_tsv = QAction("Export T&SV...", self)
         export_tsv.triggered.connect(self._export_tsv)
         file_menu.addAction(export_tsv)
 
@@ -410,6 +426,12 @@ class MainWindow(QMainWindow):
         # Annotation-specific signals
         self._annotation_editor.interval_play_requested.connect(self._play_interval)
 
+        # Track annotation changes for dirty state
+        self._annotation_editor.boundary_added.connect(self._mark_dirty)
+        self._annotation_editor.boundary_removed.connect(self._mark_dirty)
+        self._annotation_editor.boundary_moved.connect(self._mark_dirty)
+        self._annotation_editor.interval_text_changed.connect(self._mark_dirty)
+
         # Player callbacks
         self._player.set_position_callback(self._on_playback_position)
         # Use signal for thread-safe callback from audio thread
@@ -499,6 +521,10 @@ class MainWindow(QMainWindow):
         try:
             self._status_bar.showMessage(f"Loading {Path(file_path).name}...")
 
+            # Reset state for new file
+            self._textgrid_path = None
+            self._is_dirty = False
+
             # Load audio
             self._audio_data = load_audio(file_path)
             self._player.set_audio_data(self._audio_data)
@@ -512,8 +538,8 @@ class MainWindow(QMainWindow):
             self._annotation_editor.set_annotations(self._annotations)
             self._annotation_editor.set_x_range(0, self._audio_data.duration)
 
-            # Update window title with filename
-            self.setWindowTitle(f"WaveAnnotator - {Path(file_path).name}")
+            # Update window title
+            self._update_window_title()
 
             self._status_bar.showMessage("Computing spectrogram...")
             QTimer.singleShot(10, lambda: self._compute_analysis(file_path))
@@ -802,11 +828,15 @@ class MainWindow(QMainWindow):
             if self._audio_data:
                 self._annotations.duration = self._audio_data.duration
             self._annotation_editor.set_annotations(self._annotations)
+            self._textgrid_path = file_path
+            self._is_dirty = False
+            self._update_window_title()
+            self._autosave_timer.start()
             self._status_bar.showMessage(
-                f"Imported {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
+                f"Opened {self._annotations.num_tiers} tier(s) from {Path(file_path).name}"
             )
         except Exception as e:
-            QMessageBox.critical(self, "Import Error", f"Failed to import TextGrid: {e}")
+            QMessageBox.critical(self, "Open Error", f"Failed to open TextGrid: {e}")
 
     def _create_predefined_tiers(self, tier_names: list[str]):
         """Create annotation tiers with predefined names."""
@@ -817,33 +847,110 @@ class MainWindow(QMainWindow):
         for name in tier_names:
             self._annotations.add_tier(name)
         self._annotation_editor.set_annotations(self._annotations)
+        self._is_dirty = True
+        self._update_window_title()
+        self._autosave_timer.start()
         self._status_bar.showMessage(
             f"Created {len(tier_names)} tier(s): {', '.join(tier_names)}"
         )
 
-    def _export_textgrid(self):
-        """Export annotations to a TextGrid file."""
+    def _setup_textgrid_path(self, file_path: str):
+        """Setup a TextGrid path for saving (may be new or existing file)."""
+        self._textgrid_path = file_path
+        self._is_dirty = True
+        self._update_window_title()
+        self._autosave_timer.start()
+
+    def setup_textgrid_from_path(self, file_path: str, tier_names: list[str] | None = None) -> bool:
+        """Setup TextGrid from a path - load existing or create new with confirmation.
+
+        Args:
+            file_path: Path to TextGrid file (may or may not exist)
+            tier_names: Tier names to create if file doesn't exist
+
+        Returns:
+            True if setup succeeded, False if user cancelled
+        """
+        path = Path(file_path)
+
+        if path.exists():
+            # Load existing file
+            self._import_textgrid_file(file_path)
+            return True
+        else:
+            # File doesn't exist - ask user if they want to create it
+            tier_info = ""
+            if tier_names:
+                tier_info = f"\n\nTiers to create: {', '.join(tier_names)}"
+
+            reply = QMessageBox.question(
+                self,
+                "Create New TextGrid",
+                f"TextGrid file does not exist:\n{file_path}\n\n"
+                f"Do you want to create it?{tier_info}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # Create tiers (or default tier)
+                if tier_names:
+                    self._create_predefined_tiers(tier_names)
+                # Set the path for saving
+                self._textgrid_path = file_path
+                self._update_window_title()
+                self._status_bar.showMessage(
+                    f"New TextGrid will be saved to {path.name}"
+                )
+                return True
+            else:
+                return False
+
+    def _save_textgrid(self):
+        """Save annotations to the current TextGrid path, or prompt for path."""
         if self._annotations is None or self._annotations.num_tiers == 0:
-            QMessageBox.warning(self, "Export", "No annotations to export.")
+            QMessageBox.warning(self, "Save", "No annotations to save.")
             return
 
-        # Default filename based on audio file
+        if self._textgrid_path:
+            # Save to existing path
+            self._do_save_textgrid(self._textgrid_path)
+        else:
+            # No path set, use Save As
+            self._save_textgrid_as()
+
+    def _save_textgrid_as(self):
+        """Save annotations to a new TextGrid file (always prompts)."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            QMessageBox.warning(self, "Save", "No annotations to save.")
+            return
+
+        # Default filename based on audio file or existing textgrid path
         default_name = ""
-        if self._current_file_path:
+        if self._textgrid_path:
+            default_name = self._textgrid_path
+        elif self._current_file_path:
             default_name = Path(self._current_file_path).stem + ".TextGrid"
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export TextGrid",
+            "Save TextGrid As",
             default_name,
             "TextGrid Files (*.TextGrid);;All Files (*)"
         )
         if file_path:
-            try:
-                write_textgrid(self._annotations, file_path)
-                self._status_bar.showMessage(f"Exported annotations to {Path(file_path).name}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to export TextGrid: {e}")
+            self._do_save_textgrid(file_path)
+            self._textgrid_path = file_path
+            self._update_window_title()
+
+    def _do_save_textgrid(self, file_path: str):
+        """Actually save the TextGrid to the given path."""
+        try:
+            write_textgrid(self._annotations, file_path)
+            self._is_dirty = False
+            self._update_window_title()
+            self._status_bar.showMessage(f"Saved annotations to {Path(file_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save TextGrid: {e}")
 
     def _import_tsv(self):
         """Import annotations from a TSV file."""
@@ -962,6 +1069,86 @@ class MainWindow(QMainWindow):
     def _play_interval_at_cursor(self):
         """Play the interval at the current cursor position."""
         self._annotation_editor.play_interval_at_cursor()
+
+    def _mark_dirty(self, *args):
+        """Mark annotations as having unsaved changes."""
+        if not self._is_dirty:
+            self._is_dirty = True
+            self._update_window_title()
+
+    def _update_window_title(self):
+        """Update window title to show file name and dirty state."""
+        title = "WaveAnnotator"
+        if self._current_file_path:
+            title = f"WaveAnnotator - {Path(self._current_file_path).name}"
+        if self._textgrid_path:
+            title += f" [{Path(self._textgrid_path).name}]"
+        if self._is_dirty:
+            title += " *"
+        self.setWindowTitle(title)
+
+    def _auto_save(self):
+        """Auto-save annotations to a backup file."""
+        if self._annotations is None or self._annotations.num_tiers == 0:
+            return
+        if not self._is_dirty:
+            return
+
+        # Determine backup path
+        if self._textgrid_path:
+            backup_path = self._textgrid_path + ".autosave"
+        elif self._current_file_path:
+            backup_path = Path(self._current_file_path).stem + ".TextGrid.autosave"
+            backup_path = str(Path(self._current_file_path).parent / backup_path)
+        else:
+            # Use temp directory
+            backup_path = os.path.join(tempfile.gettempdir(), "waveannotator_autosave.TextGrid")
+
+        try:
+            write_textgrid(self._annotations, backup_path)
+            self._status_bar.showMessage(f"Auto-saved to {Path(backup_path).name}", 3000)
+        except Exception as e:
+            self._status_bar.showMessage(f"Auto-save failed: {e}", 5000)
+
+    def closeEvent(self, event):
+        """Handle window close - prompt if unsaved changes."""
+        if self._is_dirty:
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "You have unsaved changes. Do you want to save before closing?",
+                QMessageBox.StandardButton.Save |
+                QMessageBox.StandardButton.Discard |
+                QMessageBox.StandardButton.Cancel
+            )
+
+            if reply == QMessageBox.StandardButton.Save:
+                self._save_textgrid()
+                # If still dirty (save was cancelled or failed), don't close
+                if self._is_dirty:
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            # Discard - just close
+
+        # Stop playback and timers
+        self._player.stop()
+        self._playback_timer.stop()
+        self._autosave_timer.stop()
+
+        # Clean up autosave file if it exists and we saved successfully
+        if not self._is_dirty:
+            if self._textgrid_path:
+                autosave_path = self._textgrid_path + ".autosave"
+                if os.path.exists(autosave_path):
+                    try:
+                        os.remove(autosave_path)
+                    except OSError:
+                        pass
+
+        event.accept()
 
     def eventFilter(self, obj, event):
         """Filter events to catch key presses for text input."""

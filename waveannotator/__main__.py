@@ -49,13 +49,14 @@ def main() -> int:
         if args.audio_file:
             window._load_audio_file(args.audio_file)
 
-            # Import TextGrid if provided
+            # Setup TextGrid if provided (existing or new)
             if args.textgrid_file:
                 textgrid_path = Path(args.textgrid_file)
                 if textgrid_path.suffix.lower() in ('.textgrid', '.txt'):
-                    window._import_textgrid_file(args.textgrid_file)
+                    # Pass tier names for new file creation
+                    window.setup_textgrid_from_path(args.textgrid_file, args.tiers)
 
-            # Create predefined tiers if specified (and no TextGrid was loaded)
+            # Create predefined tiers if specified (and no TextGrid was provided)
             elif args.tiers:
                 window._create_predefined_tiers(args.tiers)
 

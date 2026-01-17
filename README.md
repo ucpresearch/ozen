@@ -95,8 +95,16 @@ python -m waveannotator audio.wav -t words phones
 | Key | Action |
 |-----|--------|
 | Ctrl+O | Open audio file |
-| Ctrl+S | Save annotations |
-| Ctrl+Shift+S | Save annotations as... |
+| Ctrl+S | Save TextGrid (to current path, or prompts if none) |
+| Ctrl+Shift+S | Save TextGrid as... |
+
+## Save Behavior
+
+- **Ctrl+S** saves to the current TextGrid path if one exists (from opening a file or previous save)
+- If no path is set, Ctrl+S prompts for a location (same as Save As)
+- **Auto-save**: Every 60 seconds, annotations are saved to a `.autosave` backup file
+- **Exit confirmation**: If you have unsaved changes, you'll be prompted to save before closing
+- When starting with a non-existing TextGrid path, you'll be asked if you want to create it
 
 ## Supported Formats
 
