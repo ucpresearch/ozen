@@ -53,10 +53,10 @@ python -m ozen audio.wav annotations.TextGrid
 
 ```bash
 # Create tiers automatically when audio loads
-python -m ozen audio.wav --tiers words phones syllables
+python -m ozen audio.wav --tiers words,phones
 
 # Short form
-python -m ozen audio.wav -t words phones
+python -m ozen audio.wav -t words,phones
 ```
 
 ## Keyboard Shortcuts

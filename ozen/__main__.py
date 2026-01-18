@@ -8,7 +8,7 @@ Usage:
     python -m ozen [audio_file] [textgrid_file] [options]
 
 Options:
-    --tiers, -t     Predefined tier names to create
+    --tiers, -t     Comma-separated tier names to create
     --config, -c    Path to custom config file (YAML or JSON)
 
 Examples:
@@ -21,8 +21,8 @@ Examples:
     # Open with audio and existing TextGrid
     python -m ozen recording.wav annotations.TextGrid
 
-    # Open with audio and create new TextGrid with predefined tiers
-    python -m ozen recording.wav --tiers words phones
+    # Open with audio and create tiers
+    python -m ozen recording.wav --tiers words,phones
 
     # Use a custom config file
     python -m ozen recording.wav --config myconfig.yaml
@@ -65,8 +65,7 @@ def parse_args():
     )
     parser.add_argument(
         "--tiers", "-t",
-        nargs="+",
-        help="Predefined tier names (e.g., --tiers words phones)"
+        help="Comma-separated tier names (e.g., -t words,phones)"
     )
     parser.add_argument(
         "--config", "-c",
@@ -100,10 +99,15 @@ def main() -> int:
 
     window = MainWindow()
 
+    # Parse comma-separated tier names from CLI
+    tier_names = None
+    if args.tiers:
+        tier_names = [t.strip() for t in args.tiers.split(',') if t.strip()]
+
     # Set default tier names from CLI (takes priority over config)
     # This affects all future file opens, not just the initial one
-    if args.tiers:
-        window.set_default_tier_names(args.tiers)
+    if tier_names:
+        window.set_default_tier_names(tier_names)
 
     window.show()
 
@@ -121,7 +125,7 @@ def main() -> int:
                 if textgrid_path.suffix.lower() in ('.textgrid', '.txt'):
                     # setup_textgrid_from_path handles both existing files
                     # and prompting to create new ones
-                    window.setup_textgrid_from_path(args.textgrid_file, args.tiers)
+                    window.setup_textgrid_from_path(args.textgrid_file, tier_names)
 
     if args.audio_file:
         # Defer file loading until after the Qt event loop starts
