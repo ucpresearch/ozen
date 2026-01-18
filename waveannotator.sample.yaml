@@ -1,0 +1,197 @@
+colors:
+  waveform_background:
+  - 255
+  - 255
+  - 255
+  - 255
+  waveform_line:
+  - 0
+  - 0
+  - 0
+  - 255
+  waveform_line_width: 2
+  cursor:
+  - 200
+  - 0
+  - 0
+  - 255
+  cursor_width: 2
+  selection_fill:
+  - 180
+  - 180
+  - 255
+  - 100
+  selection_border:
+  - 80
+  - 80
+  - 180
+  - 255
+  selection_border_width: 2
+  pitch:
+  - 0
+  - 100
+  - 255
+  - 255
+  pitch_width: 2
+  intensity:
+  - 255
+  - 200
+  - 0
+  - 255
+  intensity_width: 2
+  formant:
+  - 255
+  - 0
+  - 0
+  - 255
+  formant_wide:
+  - 255
+  - 150
+  - 150
+  - 255
+  formant_size: 4
+  cog:
+  - 0
+  - 200
+  - 0
+  - 255
+  cog_width: 2
+  hnr:
+  - 180
+  - 0
+  - 220
+  - 255
+  hnr_width: 3
+  spectral_tilt:
+  - 255
+  - 140
+  - 0
+  - 255
+  spectral_tilt_width: 3
+  a1p0:
+  - 0
+  - 200
+  - 200
+  - 255
+  a1p0_width: 3
+  nasal_murmur:
+  - 200
+  - 0
+  - 200
+  - 255
+  nasal_murmur_width: 3
+  tier_background:
+  - 240
+  - 240
+  - 240
+  - 255
+  tier_border:
+  - 100
+  - 100
+  - 100
+  - 255
+  tier_selected:
+  - 200
+  - 220
+  - 255
+  - 255
+  boundary:
+  - 0
+  - 100
+  - 200
+  - 255
+  boundary_hover:
+  - 255
+  - 150
+  - 0
+  - 255
+  boundary_width: 2
+  interval_text:
+  - 0
+  - 0
+  - 0
+  - 255
+  play_button:
+  - 0
+  - 120
+  - 0
+  - 230
+  play_button_hover:
+  - 0
+  - 180
+  - 0
+  - 255
+formant_presets:
+  female:
+    max_formant: 5500
+    num_formants: 5
+    pitch_floor: 100
+    pitch_ceiling: 500
+  male:
+    max_formant: 5000
+    num_formants: 5
+    pitch_floor: 75
+    pitch_ceiling: 300
+  child:
+    max_formant: 8000
+    num_formants: 5
+    pitch_floor: 150
+    pitch_ceiling: 600
+formant_filters:
+  F1:
+    min_freq: 150
+    max_freq: 1200
+    max_bandwidth: 600
+  F2:
+    min_freq: 500
+    max_freq: 3500
+    max_bandwidth: 700
+  F3:
+    min_freq: 1400
+    max_freq: 4500
+    max_bandwidth: 800
+  F4:
+    min_freq: 2500
+    max_freq: 6000
+    max_bandwidth: 900
+spectrogram:
+  default_colormap: grayscale
+  default_bandwidth: Narrowband
+  narrowband_window: 0.025
+  wideband_window: 0.005
+  dynamic_range: 70.0
+  default_max_frequency: 5000
+  max_frequency_options:
+  - 5000
+  - 7500
+  - 10000
+pitch:
+  display_floor: 50
+  display_ceiling: 800
+analysis:
+  time_step: 0.01
+  default_pitch_floor: 75
+  default_pitch_ceiling: 600
+  hnr_silence_threshold: 0.1
+  auto_extract_max_duration: 60.0
+nasal_ratio:
+  a1_bandwidth_factor: 0.1
+  p0_low: 200
+  p0_high: 300
+  murmur_low: 0
+  murmur_high: 500
+  murmur_total_high: 5000
+spectral_tilt:
+  low_band_start: 0
+  low_band_end: 500
+  high_band_start: 2000
+  high_band_end: 4000
+annotation:
+  max_tiers: 5
+  tier_height: 60
+  boundary_snap_threshold: 0.015
+  click_threshold: 0.005
+  autosave_interval: 60000
+display:
+  waveform_max_points: 100000
+  axis_width: 70

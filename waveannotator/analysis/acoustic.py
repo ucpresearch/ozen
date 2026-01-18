@@ -1,4 +1,25 @@
-"""Acoustic analysis using Parselmouth (Praat) and scipy."""
+"""
+Acoustic analysis using Parselmouth (Praat) and scipy.
+
+This module provides acoustic feature extraction for speech analysis.
+It uses Parselmouth (Python bindings for Praat) for core acoustic
+measurements and scipy for spectrogram computation.
+
+Features extracted:
+    - Pitch (F0): Fundamental frequency using Praat's autocorrelation method
+    - Formants (F1-F4): Vocal tract resonances using Burg's method
+    - Formant bandwidths (B1-B4): Width of formant peaks
+    - Intensity: Sound pressure level in dB
+    - HNR: Harmonics-to-noise ratio (voice quality measure)
+    - Center of Gravity (CoG): Spectral centroid
+    - Spectral tilt: Balance between low and high frequencies
+    - A1-P0 nasal ratio: Nasality measure (amplitude at F0 vs ~250Hz)
+    - Nasal murmur ratio: Low-frequency energy proportion
+
+The module also provides spectrogram computation using either:
+    - scipy with Gaussian window (default, high resolution)
+    - Praat's spectrogram algorithm (optional)
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,24 +31,47 @@ from parselmouth.praat import call
 from scipy import signal
 import soundfile as sf
 
+from ..config import config
+
 
 @dataclass
 class AcousticFeatures:
-    """Container for time-aligned acoustic features."""
+    """
+    Container for time-aligned acoustic features.
+
+    All arrays are aligned to the same time axis (self.times).
+    NaN values indicate frames where a feature could not be computed
+    (e.g., pitch during unvoiced segments).
+
+    Attributes:
+        times: Time points in seconds for each frame
+        f0: Fundamental frequency in Hz (NaN for unvoiced)
+        intensity: Sound intensity in dB
+        hnr: Harmonics-to-noise ratio in dB (voice quality)
+        formants: Dict with 'F1' through 'F4' frequency arrays
+        bandwidths: Dict with 'B1' through 'B4' bandwidth arrays
+        cog: Center of gravity (spectral centroid) in Hz
+        spectral_std: Standard deviation of spectrum
+        skewness: Spectral skewness (asymmetry)
+        kurtosis: Spectral kurtosis (peakedness)
+        nasal_murmur_ratio: Ratio of low-freq (0-500Hz) to total energy
+        spectral_tilt: Low vs high frequency balance in dB
+        nasal_ratio: A1-P0 nasal ratio in dB (requires voicing)
+    """
 
     times: np.ndarray
-    f0: np.ndarray  # Fundamental frequency (Hz)
-    intensity: np.ndarray  # Intensity (dB)
-    hnr: np.ndarray  # Harmonics-to-noise ratio
-    formants: dict[str, np.ndarray]  # F1-F4 frequencies
-    bandwidths: dict[str, np.ndarray]  # B1-B3 bandwidths
-    cog: np.ndarray  # Center of gravity
-    spectral_std: np.ndarray  # Spectral standard deviation
-    skewness: np.ndarray  # Spectral skewness
-    kurtosis: np.ndarray  # Spectral kurtosis
-    nasal_murmur_ratio: np.ndarray  # Low-freq energy ratio
-    spectral_tilt: np.ndarray  # Spectral tilt
-    nasal_ratio: np.ndarray  # A1-P0 nasal ratio (dB)
+    f0: np.ndarray
+    intensity: np.ndarray
+    hnr: np.ndarray
+    formants: dict[str, np.ndarray]
+    bandwidths: dict[str, np.ndarray]
+    cog: np.ndarray
+    spectral_std: np.ndarray
+    skewness: np.ndarray
+    kurtosis: np.ndarray
+    nasal_murmur_ratio: np.ndarray
+    spectral_tilt: np.ndarray
+    nasal_ratio: np.ndarray
 
 
 def extract_features(
@@ -71,11 +115,12 @@ def extract_features(
     else:
         analysis_duration = total_duration
 
-    # Create analysis objects
-    pitch = call(snd, "To Pitch", 0.01, pitch_floor, pitch_ceiling)
-    intensity = call(snd, "To Intensity", pitch_floor, 0.01)
-    formants = call(snd, "To Formant (burg)", 0.005, 5, max_formant, 0.025, 50)
-    harmonicity = call(snd, "To Harmonicity (cc)", 0.01, pitch_floor, 0.1, 1.0)
+    # Create Praat analysis objects
+    # These compute the full analysis once; we then query values at each time point
+    pitch = call(snd, "To Pitch", 0.01, pitch_floor, pitch_ceiling)  # Autocorrelation method
+    intensity = call(snd, "To Intensity", pitch_floor, 0.01)  # RMS energy
+    formants = call(snd, "To Formant (burg)", 0.005, 5, max_formant, 0.025, 50)  # Burg's method
+    harmonicity = call(snd, "To Harmonicity (cc)", 0.01, pitch_floor, 0.1, 1.0)  # Cross-correlation HNR
 
     # Generate time points
     times = np.arange(0, analysis_duration, time_step)
@@ -92,6 +137,7 @@ def extract_features(
     bw1_vals = np.full(n_frames, np.nan)
     bw2_vals = np.full(n_frames, np.nan)
     bw3_vals = np.full(n_frames, np.nan)
+    bw4_vals = np.full(n_frames, np.nan)
     cog_vals = np.full(n_frames, np.nan)
     std_vals = np.full(n_frames, np.nan)
     skew_vals = np.full(n_frames, np.nan)
@@ -100,13 +146,15 @@ def extract_features(
     tilt_vals = np.full(n_frames, np.nan)
     a1p0_vals = np.full(n_frames, np.nan)  # A1-P0 nasal ratio
 
-    window_duration = 0.025
+    window_duration = 0.025  # Window size for spectral analysis
 
+    # Main extraction loop: query each feature at each time point
+    # This is slow but provides maximum accuracy
     for i, t in enumerate(times):
         if progress_callback and i % 100 == 0:
             progress_callback(i / n_frames)
 
-        # Basic features from Praat objects
+        # === Basic features from pre-computed Praat objects ===
         f0_val = call(pitch, "Get value at time", t, "Hertz", "Linear")
         f0_vals[i] = f0_val if f0_val else np.nan
 
@@ -124,6 +172,7 @@ def extract_features(
         bw1_vals[i] = call(formants, "Get bandwidth at time", 1, t, "Hertz", "Linear") or np.nan
         bw2_vals[i] = call(formants, "Get bandwidth at time", 2, t, "Hertz", "Linear") or np.nan
         bw3_vals[i] = call(formants, "Get bandwidth at time", 3, t, "Hertz", "Linear") or np.nan
+        bw4_vals[i] = call(formants, "Get bandwidth at time", 4, t, "Hertz", "Linear") or np.nan
 
         # Spectral moments (from short-time spectrum)
         t_start = max(0, t - window_duration / 2)
@@ -167,10 +216,12 @@ def extract_features(
 
     # Post-process formants: filter by bandwidth and frequency range
     # Use more lenient bandwidth thresholds (Praat-like)
-    f1_vals, bw1_vals = _filter_formant(f1_vals, bw1_vals, min_freq=150, max_freq=1200, max_bw=600)
-    f2_vals, bw2_vals = _filter_formant(f2_vals, bw2_vals, min_freq=500, max_freq=3500, max_bw=700)
-    f3_vals, bw3_vals = _filter_formant(f3_vals, bw3_vals, min_freq=1400, max_freq=4500, max_bw=800)
-    f4_vals, _ = _filter_formant(f4_vals, None, min_freq=2500, max_freq=5500, max_bw=None)
+    # Post-process formants using filter thresholds from config
+    filters = config['formant_filters']
+    f1_vals, bw1_vals = _filter_formant(f1_vals, bw1_vals, **filters['F1'])
+    f2_vals, bw2_vals = _filter_formant(f2_vals, bw2_vals, **filters['F2'])
+    f3_vals, bw3_vals = _filter_formant(f3_vals, bw3_vals, **filters['F3'])
+    f4_vals, bw4_vals = _filter_formant(f4_vals, bw4_vals, **filters['F4'])
 
     # Apply median filtering to smooth outliers (window of 5 for better smoothing)
     f1_vals = _median_filter(f1_vals, window=5)
@@ -191,7 +242,7 @@ def extract_features(
         intensity=intensity_vals,
         hnr=hnr_vals,
         formants={'F1': f1_vals, 'F2': f2_vals, 'F3': f3_vals, 'F4': f4_vals},
-        bandwidths={'B1': bw1_vals, 'B2': bw2_vals, 'B3': bw3_vals},
+        bandwidths={'B1': bw1_vals, 'B2': bw2_vals, 'B3': bw3_vals, 'B4': bw4_vals},
         cog=cog_vals,
         spectral_std=std_vals,
         skewness=skew_vals,
@@ -207,12 +258,19 @@ def _filter_formant(
     bandwidth: np.ndarray | None,
     min_freq: float,
     max_freq: float,
-    max_bw: float | None
+    max_bandwidth: float | None
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """
     Filter formant values based on frequency range and bandwidth.
 
     Values outside the expected range or with too high bandwidth are set to NaN.
+
+    Args:
+        formant: Array of formant frequency values
+        bandwidth: Array of bandwidth values (can be None)
+        min_freq: Minimum allowed frequency (Hz)
+        max_freq: Maximum allowed frequency (Hz)
+        max_bandwidth: Maximum allowed bandwidth (Hz), or None to skip filter
     """
     formant = formant.copy()
     if bandwidth is not None:
@@ -225,8 +283,8 @@ def _filter_formant(
         bandwidth[out_of_range] = np.nan
 
     # Filter by bandwidth (high bandwidth = unreliable)
-    if max_bw is not None and bandwidth is not None:
-        high_bw = bandwidth > max_bw
+    if max_bandwidth is not None and bandwidth is not None:
+        high_bw = bandwidth > max_bandwidth
         formant[high_bw] = np.nan
         bandwidth[high_bw] = np.nan
 

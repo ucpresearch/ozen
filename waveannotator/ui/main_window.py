@@ -1,4 +1,35 @@
-"""Main application window."""
+"""
+Main application window for WaveAnnotator.
+
+This module contains the MainWindow class, which is the central hub of
+the application. It coordinates all the major components:
+
+Components:
+    - WaveformWidget: Displays the audio waveform
+    - SpectrogramWidget: Displays spectrogram with acoustic overlays
+    - AnnotationEditorWidget: Displays and edits annotation tiers
+    - AudioPlayer: Handles audio playback
+    - Control panel: Settings for spectrogram, formants, overlays
+
+Responsibilities:
+    - Layout management (splitter between views)
+    - Menu and toolbar creation
+    - Keyboard shortcut handling
+    - Synchronization between views (time range, cursor, selection)
+    - File I/O (audio, TextGrid, TSV)
+    - Feature extraction (background thread)
+    - Save/autosave state management
+    - Playback control
+
+Signal Connections:
+    The main window connects signals between the three display widgets
+    to keep them synchronized. When one widget changes its view range,
+    cursor position, or selection, the change is propagated to the others.
+
+Threading:
+    Feature extraction runs in a background thread (FeatureExtractionThread)
+    to keep the UI responsive. Progress is reported via Qt signals.
+"""
 
 from pathlib import Path
 from typing import Optional
@@ -24,31 +55,46 @@ from ..annotation import (
     AnnotationSet, AnnotationEditorWidget,
     read_textgrid, write_textgrid, read_tsv, write_tsv
 )
+from ..config import config
 
 
 class FeatureExtractionThread(QThread):
-    """Background thread for feature extraction."""
+    """
+    Background thread for acoustic feature extraction.
+
+    Runs the computationally expensive feature extraction in a separate
+    thread to keep the UI responsive. Reports progress and results via
+    Qt signals.
+
+    Signals:
+        progress(float): Extraction progress from 0.0 to 1.0
+        finished(AcousticFeatures): Successful extraction result
+        error(str): Error message if extraction fails
+
+    Usage:
+        thread = FeatureExtractionThread(file_path, preset='female')
+        thread.progress.connect(update_progress_bar)
+        thread.finished.connect(on_features_ready)
+        thread.error.connect(on_extraction_error)
+        thread.start()
+    """
 
     progress = pyqtSignal(float)
     finished = pyqtSignal(object)  # AcousticFeatures or Exception
     error = pyqtSignal(str)
 
-    # Formant presets
-    FORMANT_PRESETS = {
-        'male': {'max_formant': 5000, 'pitch_floor': 75, 'pitch_ceiling': 300},
-        'female': {'max_formant': 5500, 'pitch_floor': 100, 'pitch_ceiling': 500},
-        'child': {'max_formant': 8000, 'pitch_floor': 150, 'pitch_ceiling': 600},
-    }
-
-    def __init__(self, file_path: str, time_step: float = 0.01, preset: str = 'male'):
+    def __init__(self, file_path: str, time_step: float = None, preset: str = 'male'):
         super().__init__()
         self.file_path = file_path
-        self.time_step = time_step
+        # Use time_step from config if not specified
+        self.time_step = time_step if time_step is not None else config['analysis']['time_step']
         self.preset = preset
 
     def run(self):
         try:
-            params = self.FORMANT_PRESETS.get(self.preset, self.FORMANT_PRESETS['male'])
+            # Get formant preset from config
+            presets = config['formant_presets']
+            params = presets.get(self.preset, presets['male'])
             features = extract_features(
                 self.file_path,
                 time_step=self.time_step,
@@ -63,9 +109,38 @@ class FeatureExtractionThread(QThread):
 
 
 class MainWindow(QMainWindow):
-    """Main application window for WaveAnnotator."""
+    """
+    Main application window for WaveAnnotator.
+
+    This is the central class that creates and coordinates all UI components.
+    It manages the application state including:
+    - Currently loaded audio file
+    - Extracted acoustic features
+    - Annotation data and save state
+    - Playback state
+
+    The window layout consists of a vertical splitter with three panels:
+    1. Waveform display (top)
+    2. Spectrogram with overlays (middle)
+    3. Annotation editor (bottom)
+
+    Below the panels is a control panel with settings and a status bar.
+
+    Key methods:
+        _load_audio_file(): Load audio and compute spectrogram
+        _start_feature_extraction(): Begin background feature extraction
+        _save_textgrid() / _save_textgrid_as(): Save annotations
+        _toggle_playback(): Play/pause audio
+        setup_textgrid_from_path(): Load or create TextGrid from path
+
+    State tracking:
+        _is_dirty: True if annotations have unsaved changes
+        _textgrid_path: Current save path for annotations
+        _autosave_timer: Timer for periodic autosave
+    """
 
     # Signal for thread-safe playback finished notification
+    # (audio callback runs on separate thread, needs signal to update UI)
     _playback_finished_signal = pyqtSignal()
 
     def __init__(self):
@@ -167,6 +242,14 @@ class MainWindow(QMainWindow):
         self._colormap_combo.currentTextChanged.connect(self._spectrogram.set_colormap)
         spec_layout.addWidget(QLabel("Color:"))
         spec_layout.addWidget(self._colormap_combo)
+
+        # Max frequency
+        self._max_freq_combo = QComboBox()
+        self._max_freq_combo.addItems(['5000 Hz', '7500 Hz', '10000 Hz'])
+        self._max_freq_combo.setToolTip("Maximum frequency displayed on spectrogram")
+        self._max_freq_combo.currentTextChanged.connect(self._on_max_freq_changed)
+        spec_layout.addWidget(QLabel("Max:"))
+        spec_layout.addWidget(self._max_freq_combo)
 
         layout.addWidget(spec_group)
 
@@ -571,6 +654,17 @@ class MainWindow(QMainWindow):
         if self._current_file_path:
             self._recompute_spectrogram()
 
+    def _on_max_freq_changed(self, freq_str: str):
+        """Handle max frequency change."""
+        if self._current_file_path:
+            self._recompute_spectrogram()
+
+    def _get_max_frequency(self) -> float:
+        """Get the currently selected max frequency in Hz."""
+        freq_str = self._max_freq_combo.currentText()
+        # Parse "5000 Hz" -> 5000.0
+        return float(freq_str.replace(' Hz', ''))
+
     def _on_formant_preset_changed(self, preset: str):
         """Handle formant preset change."""
         # Store the preset for next feature extraction
@@ -601,10 +695,12 @@ class MainWindow(QMainWindow):
         else:  # Narrowband
             window_length = 0.025  # 25ms - better frequency resolution (shows harmonics)
 
+        max_freq = self._get_max_frequency()
+
         times, freqs, spec_db = compute_spectrogram(
             self._current_file_path,
             window_length=window_length,
-            max_frequency=5000.0,
+            max_frequency=max_freq,
             dynamic_range=70.0
         )
         self._spectrogram.set_spectrogram(times, freqs, spec_db)
@@ -615,17 +711,19 @@ class MainWindow(QMainWindow):
             self._current_file_path = file_path
             self._current_formant_preset = 'female'  # Default
 
-            # Compute spectrogram based on current bandwidth setting
+            # Compute spectrogram based on current bandwidth and frequency settings
             bandwidth = self._bandwidth_combo.currentText()
             if bandwidth == 'Wideband':
                 window_length = 0.005  # Better time resolution
             else:
                 window_length = 0.025  # Better frequency resolution
 
+            max_freq = self._get_max_frequency()
+
             times, freqs, spec_db = compute_spectrogram(
                 file_path,
                 window_length=window_length,
-                max_frequency=5000.0,
+                max_frequency=max_freq,
                 dynamic_range=70.0
             )
             self._spectrogram.set_spectrogram(times, freqs, spec_db)

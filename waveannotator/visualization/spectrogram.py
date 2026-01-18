@@ -1,4 +1,38 @@
-"""Spectrogram display widget with overlay tracks."""
+"""
+Spectrogram display widget with overlay tracks.
+
+This module provides the SpectrogramWidget class for displaying spectrograms
+with acoustic feature overlays. It's designed for speech analysis and
+integrates with the rest of WaveAnnotator.
+
+Features:
+    - Time-frequency spectrogram display (computed externally)
+    - Multiple colormap options (grayscale, viridis, inferno)
+    - Overlay tracks for acoustic features:
+        * Pitch (F0) - blue line with separate Y-axis
+        * Formants (F1-F4) - red dots with bandwidth-based transparency
+        * Intensity - yellow line
+        * Center of Gravity (CoG) - green line
+        * HNR (harmonics-to-noise) - purple dashed line
+        * Spectral tilt - orange line
+        * A1-P0 nasal ratio - cyan line
+        * Nasal murmur ratio - magenta dashed line
+    - Hover tooltip showing acoustic values at cursor
+    - Synchronized view with waveform and annotation editor
+    - Selection region for playback
+
+Architecture:
+    The widget inherits from pyqtgraph's GraphicsLayoutWidget to support
+    multiple plot areas (main spectrogram + pitch axis). Acoustic overlays
+    are rendered as PlotCurveItem objects that scale to the spectrogram's
+    frequency range.
+
+Signals:
+    time_range_changed(start, end): Emitted when the visible range changes
+    cursor_moved(time): Emitted when cursor position changes
+    selection_changed(start, end): Emitted when selection changes
+    selection_clicked(): Emitted when user clicks inside selection
+"""
 
 import numpy as np
 import pyqtgraph as pg
@@ -6,6 +40,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QTransform, QFont
 
 from ..analysis.acoustic import AcousticFeatures
+from ..config import config
 
 
 def create_spectrogram_colormap():
@@ -165,10 +200,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
     def _setup_selection(self):
         """Setup selection region."""
+        colors = config['colors']
         self._selection_region = pg.LinearRegionItem(
             values=[0, 0],
-            brush=pg.mkBrush(180, 180, 255, 100),
-            pen=pg.mkPen(color=(80, 80, 180), width=2),
+            brush=pg.mkBrush(*colors['selection_fill']),
+            pen=pg.mkPen(color=colors['selection_border'][:3], width=colors['selection_border_width']),
             movable=True
         )
         self._selection_region.hide()
@@ -176,77 +212,79 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._plot.addItem(self._selection_region)
 
     def _setup_overlays(self):
-        """Setup overlay plot items with distinct colors and thick lines."""
-        # Pitch track - blue line (scaled to frequency range for display)
+        """Setup overlay plot items with colors from config."""
+        colors = config['colors']
+
+        # Pitch track - scaled to frequency range for display
         self._pitch_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(0, 0, 200), width=3),
+            pen=pg.mkPen(color=colors['pitch'][:3], width=colors['pitch_width']),
             name='Pitch'
         )
         self._plot.addItem(self._pitch_curve)
 
-        # Intensity - yellow line
+        # Intensity
         self._intensity_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(220, 180, 0), width=3),
+            pen=pg.mkPen(color=colors['intensity'][:3], width=colors['intensity_width']),
             name='Intensity'
         )
         self._plot.addItem(self._intensity_curve)
 
-        # Formants - red dots, color fades to pink/white with higher bandwidth
+        # Formants - color fades based on bandwidth (narrow=red, wide=pink)
         self._formant_items = {}
-        # Constant size for all formants (F4 slightly smaller as it's less reliable)
         formant_sizes = {'F1': 10, 'F2': 10, 'F3': 9, 'F4': 7}
 
         for formant_key in ['F1', 'F2', 'F3', 'F4']:
             scatter = pg.ScatterPlotItem(
                 pen=None,
-                brush=pg.mkBrush(200, 0, 0, 255),  # Default red, will be updated per-point
+                brush=pg.mkBrush(*colors['formant']),
                 size=formant_sizes[formant_key],
                 name=formant_key
             )
             self._plot.addItem(scatter)
             self._formant_items[formant_key] = {'scatter': scatter, 'size': formant_sizes[formant_key]}
 
-        # Center of Gravity - green
+        # Center of Gravity
         self._cog_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(0, 180, 0), width=3),
+            pen=pg.mkPen(color=colors['cog'][:3], width=colors['cog_width']),
             name='CoG'
         )
         self._plot.addItem(self._cog_curve)
 
-        # HNR - bright purple dotted
+        # HNR (dashed line)
         self._hnr_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(180, 0, 220), width=3, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(color=colors['hnr'][:3], width=colors['hnr_width'], style=Qt.PenStyle.DashLine),
             name='HNR'
         )
         self._plot.addItem(self._hnr_curve)
 
-        # Spectral tilt - orange line
+        # Spectral tilt
         self._tilt_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(255, 140, 0), width=3),
+            pen=pg.mkPen(color=colors['spectral_tilt'][:3], width=colors['spectral_tilt_width']),
             name='Spectral Tilt'
         )
         self._plot.addItem(self._tilt_curve)
 
-        # A1-P0 nasal ratio - cyan line (requires voicing)
+        # A1-P0 nasal ratio (requires voicing)
         self._a1p0_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(0, 200, 200), width=3),
+            pen=pg.mkPen(color=colors['a1p0'][:3], width=colors['a1p0_width']),
             name='A1-P0'
         )
         self._plot.addItem(self._a1p0_curve)
 
-        # Nasal murmur ratio - magenta dashed line
+        # Nasal murmur ratio (dashed line)
         self._nasal_murmur_curve = pg.PlotCurveItem(
-            pen=pg.mkPen(color=(200, 0, 200), width=3, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(color=colors['nasal_murmur'][:3], width=colors['nasal_murmur_width'], style=Qt.PenStyle.DashLine),
             name='Nasal Murmur'
         )
         self._plot.addItem(self._nasal_murmur_curve)
 
     def _setup_cursor(self):
         """Setup playback cursor."""
+        colors = config['colors']
         self._cursor_line = pg.InfiniteLine(
             pos=0,
             angle=90,
-            pen=pg.mkPen(color=(200, 0, 0), width=2),
+            pen=pg.mkPen(color=colors['cursor'][:3], width=colors['cursor_width']),
             movable=False
         )
         self._cursor_line.setZValue(1000)  # Ensure cursor is always on top

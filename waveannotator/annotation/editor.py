@@ -1,4 +1,31 @@
-"""Annotation editor widget for displaying and editing annotation tiers."""
+"""
+Annotation editor widget for displaying and editing annotation tiers.
+
+This module provides the visual interface for creating and editing
+annotation tiers (similar to Praat's TextGrid editor). It consists of:
+
+    TierItem: A pyqtgraph GraphicsObject that renders a single tier
+        as a horizontal band with interval boundaries and labels.
+
+    AnnotationEditorWidget: A pyqtgraph PlotWidget that manages multiple
+        TierItem objects and handles user interaction.
+
+Features:
+    - Visual display of interval tiers with labels and durations
+    - Click to select intervals, double-click to add boundaries
+    - Drag boundaries to move them
+    - Inline text editing for interval labels
+    - Play buttons for individual intervals
+    - Keyboard shortcuts (Enter to add boundary, Delete to remove)
+    - Undo support for boundary and text changes
+    - Synchronized cursor with waveform/spectrogram views
+
+Architecture:
+    The editor inherits from pg.PlotWidget and uses custom GraphicsObjects
+    (TierItem) for rendering. This allows efficient zooming/panning while
+    maintaining crisp text rendering. Mouse events are handled at the
+    widget level and dispatched to appropriate tier items.
+"""
 
 import numpy as np
 import pyqtgraph as pg
@@ -10,7 +37,21 @@ from .tier import Tier, Interval, AnnotationSet
 
 
 class TierItem(pg.GraphicsObject):
-    """A single annotation tier displayed as horizontal band with intervals."""
+    """
+    A single annotation tier displayed as horizontal band with intervals.
+
+    This GraphicsObject renders one tier of annotations, including:
+    - Background color for the tier band
+    - Vertical lines for interval boundaries
+    - Text labels for each interval
+    - Duration display for each interval
+    - Play buttons for selected intervals
+    - Visual highlighting for selected intervals and hovered boundaries
+
+    The paint() method is optimized to only render intervals that are
+    currently visible in the view, enabling smooth performance with
+    many intervals.
+    """
 
     # Tier height in pixels (approximately)
     TIER_HEIGHT = 60

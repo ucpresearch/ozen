@@ -1,0 +1,187 @@
+# Praat-style color configuration for WaveAnnotator
+# Copy this file to waveannotator.yaml in the project directory to use these colors
+
+colors:
+  # Waveform - black on white like Praat
+  waveform_background:
+  - 255
+  - 255
+  - 255
+  - 255
+  waveform_line:
+  - 0
+  - 0
+  - 0
+  - 255
+  waveform_line_width: 1
+
+  # Cursor - Praat uses a thin red cursor
+  cursor:
+  - 255
+  - 0
+  - 0
+  - 255
+  cursor_width: 1
+
+  # Selection - Praat uses pink/magenta for selection
+  selection_fill:
+  - 255
+  - 192
+  - 203
+  - 100
+  selection_border:
+  - 255
+  - 0
+  - 128
+  - 255
+  selection_border_width: 1
+
+  # Pitch - Praat uses cyan/blue for pitch
+  pitch:
+  - 0
+  - 0
+  - 255
+  - 255
+  pitch_width: 2
+
+  # Intensity - Praat uses yellow/green
+  intensity:
+  - 0
+  - 128
+  - 0
+  - 255
+  intensity_width: 2
+
+  # Formants - Praat uses red dots
+  formant:
+  - 255
+  - 0
+  - 0
+  - 255
+  formant_wide:
+  - 255
+  - 128
+  - 128
+  - 255
+  formant_size: 3
+
+  # CoG - cyan (not in Praat, but keeping distinct)
+  cog:
+  - 0
+  - 200
+  - 200
+  - 255
+  cog_width: 2
+
+  # HNR - magenta (not in Praat)
+  hnr:
+  - 255
+  - 0
+  - 255
+  - 255
+  hnr_width: 2
+
+  # Spectral tilt - orange
+  spectral_tilt:
+  - 255
+  - 128
+  - 0
+  - 255
+  spectral_tilt_width: 2
+
+  # A1-P0 nasal ratio - dark green
+  a1p0:
+  - 0
+  - 128
+  - 64
+  - 255
+  a1p0_width: 2
+
+  # Nasal murmur ratio - purple
+  nasal_murmur:
+  - 128
+  - 0
+  - 128
+  - 255
+  nasal_murmur_width: 2
+
+  # Annotation tiers - Praat uses light gray backgrounds
+  tier_background:
+  - 245
+  - 245
+  - 245
+  - 255
+  tier_border:
+  - 128
+  - 128
+  - 128
+  - 255
+  tier_selected:
+  - 220
+  - 220
+  - 255
+  - 255
+
+  # Boundaries - Praat uses blue boundaries
+  boundary:
+  - 0
+  - 0
+  - 255
+  - 255
+  boundary_hover:
+  - 255
+  - 0
+  - 0
+  - 255
+  boundary_width: 1
+
+  # Interval text - black
+  interval_text:
+  - 0
+  - 0
+  - 0
+  - 255
+
+  # Play button - green
+  play_button:
+  - 0
+  - 128
+  - 0
+  - 200
+  play_button_hover:
+  - 0
+  - 200
+  - 0
+  - 255
+
+# Praat-like formant settings
+formant_presets:
+  female:
+    max_formant: 5500
+    num_formants: 5
+    pitch_floor: 100
+    pitch_ceiling: 500
+  male:
+    max_formant: 5000
+    num_formants: 5
+    pitch_floor: 75
+    pitch_ceiling: 300
+  child:
+    max_formant: 8000
+    num_formants: 5
+    pitch_floor: 150
+    pitch_ceiling: 600
+
+# Standard Praat-like spectrogram settings
+spectrogram:
+  default_colormap: grayscale
+  default_bandwidth: Narrowband
+  narrowband_window: 0.025
+  wideband_window: 0.005
+  dynamic_range: 70.0
+  default_max_frequency: 5000
+
+# Praat-like pitch display range
+pitch:
+  display_floor: 75
+  display_ceiling: 500

@@ -1,4 +1,28 @@
-"""Waveform display widget using pyqtgraph."""
+"""
+Waveform display widget using pyqtgraph.
+
+This module provides the WaveformWidget class for displaying audio waveforms.
+The widget is designed to integrate with the rest of WaveAnnotator through
+signals for synchronizing cursor position, selection, and view range.
+
+Features:
+    - Displays audio waveform as amplitude over time
+    - Supports zoom via scroll wheel (centered on mouse position)
+    - Supports pan via horizontal scroll
+    - Click-and-drag to create time selections
+    - Red cursor line shows current position
+    - Selection region (blue highlight) for playback
+    - Click inside selection to trigger playback
+
+The widget uses downsampling for display when the audio file is very long,
+but maintains full resolution for the underlying data.
+
+Signals:
+    time_range_changed(start, end): Emitted when the visible range changes
+    cursor_moved(time): Emitted when cursor position changes
+    selection_changed(start, end): Emitted when selection changes
+    selection_clicked(): Emitted when user clicks inside selection
+"""
 
 import numpy as np
 import pyqtgraph as pg
@@ -6,10 +30,23 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor
 
 from ..audio.loader import AudioData
+from ..config import config
 
 
 class WaveformWidget(pg.PlotWidget):
-    """Widget for displaying audio waveform."""
+    """
+    Widget for displaying audio waveform.
+
+    This widget inherits from pyqtgraph's PlotWidget and provides:
+    - Waveform display with automatic downsampling for long files
+    - Praat-like appearance (white background, black waveform)
+    - Custom mouse handling for selection and cursor
+    - Scroll wheel zoom centered on mouse position
+    - Synchronized view with spectrogram and annotation editor
+
+    The widget disables pyqtgraph's default mouse handling and implements
+    custom behavior for selection (click-and-drag) and zoom (scroll wheel).
+    """
 
     # Signals
     time_range_changed = pyqtSignal(float, float)  # (start, end)
@@ -37,16 +74,21 @@ class WaveformWidget(pg.PlotWidget):
 
     def _setup_plot(self):
         """Configure the plot appearance (Praat-like: white bg, black plot)."""
-        self.setBackground('w')  # White background
+        colors = config['colors']
+        display = config['display']
+
+        # Background color from config
+        bg = colors['waveform_background']
+        self.setBackground(QColor(*bg))
         self.showGrid(x=True, y=True, alpha=0.2)
         self.setLabel('left', 'Amplitude')
         self.setLabel('bottom', 'Time', units='s')
 
         # Set fixed axis widths for alignment with spectrogram
-        self.plotItem.getAxis('left').setWidth(70)
+        self.plotItem.getAxis('left').setWidth(display['axis_width'])
         # Add a right axis placeholder to match spectrogram's pitch axis
         self.plotItem.showAxis('right')
-        self.plotItem.getAxis('right').setWidth(70)
+        self.plotItem.getAxis('right').setWidth(display['axis_width'])
         self.plotItem.getAxis('right').setStyle(showValues=False)
         self.plotItem.getAxis('right').setTicks([])
 
@@ -56,9 +98,9 @@ class WaveformWidget(pg.PlotWidget):
         # Hide the autorange "A" button
         self.plotItem.hideButtons()
 
-        # Create the waveform plot item (black line, thicker)
+        # Create the waveform plot item
         self._waveform_curve = self.plot(
-            pen=pg.mkPen(color='k', width=2)
+            pen=pg.mkPen(color=colors['waveform_line'][:3], width=colors['waveform_line_width'])
         )
 
         # Connect view range changes
@@ -66,10 +108,11 @@ class WaveformWidget(pg.PlotWidget):
 
     def _setup_cursor(self):
         """Setup the playback cursor line."""
+        colors = config['colors']
         self._cursor_line = pg.InfiniteLine(
             pos=0,
             angle=90,
-            pen=pg.mkPen(color=(200, 0, 0), width=2),
+            pen=pg.mkPen(color=colors['cursor'][:3], width=colors['cursor_width']),
             movable=False
         )
         self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
@@ -77,10 +120,11 @@ class WaveformWidget(pg.PlotWidget):
 
     def _setup_selection(self):
         """Setup the selection region."""
+        colors = config['colors']
         self._selection_region = pg.LinearRegionItem(
             values=[0, 0],
-            brush=pg.mkBrush(180, 180, 255, 100),
-            pen=pg.mkPen(color=(80, 80, 180), width=2),
+            brush=pg.mkBrush(*colors['selection_fill']),
+            pen=pg.mkPen(color=colors['selection_border'][:3], width=colors['selection_border_width']),
             movable=True
         )
         self._selection_region.hide()

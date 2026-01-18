@@ -1,4 +1,17 @@
-"""Audio playback using sounddevice."""
+"""
+Audio playback using sounddevice.
+
+This module provides low-latency audio playback functionality using the
+sounddevice library (Python bindings for PortAudio). It supports:
+- Playing full files or selected regions
+- Pause/resume functionality
+- Position tracking with callbacks
+- Thread-safe playback state management
+
+The playback uses a callback-based streaming approach where audio data
+is fed to the output device in small chunks, allowing for responsive
+pause/stop control and position updates.
+"""
 
 from typing import Optional, Callable
 import threading
@@ -10,18 +23,33 @@ from .loader import AudioData
 
 
 class AudioPlayer:
-    """Audio playback controller."""
+    """
+    Audio playback controller using sounddevice.
+
+    This class manages audio playback with support for:
+    - Playing entire files or time-range selections
+    - Pause/resume/stop controls
+    - Real-time position tracking via callbacks
+    - Thread-safe state management (audio runs on a separate thread)
+
+    The player converts stereo audio to mono for playback and uses
+    a streaming callback approach for low-latency control.
+
+    Attributes:
+        is_playing: True if audio is currently playing
+        current_time: Current playback position in seconds
+    """
 
     def __init__(self):
         self._audio_data: AudioData | None = None
         self._is_playing: bool = False
-        self._current_frame: int = 0
-        self._start_frame: int = 0
-        self._end_frame: int = 0
+        self._current_frame: int = 0  # Current position in samples
+        self._start_frame: int = 0    # Start of playback region
+        self._end_frame: int = 0      # End of playback region
         self._stream: sd.OutputStream | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # Protects state accessed from audio thread
 
-        # Callbacks
+        # User-provided callbacks for playback events
         self._on_position_changed: Callable[[float], None] | None = None
         self._on_playback_finished: Callable[[], None] | None = None
 
@@ -84,36 +112,58 @@ class AudioPlayer:
         self._current_frame = self._start_frame
         self._is_playing = True
 
-        # Get audio data
+        # Get mono audio for playback (mix stereo to mono if needed)
         mono = self._audio_data.get_mono()
 
         def callback(outdata, frames, time_info, status):
+            """
+            Audio stream callback - called by sounddevice from audio thread.
+
+            This function is called repeatedly to fill the output buffer.
+            It must be fast and thread-safe (uses lock for state access).
+
+            Args:
+                outdata: Output buffer to fill with audio samples
+                frames: Number of frames requested
+                time_info: Timing information (unused)
+                status: Stream status flags (unused)
+
+            Raises:
+                sd.CallbackStop: To signal end of playback
+            """
             with self._lock:
+                # Check if playback was stopped externally
                 if not self._is_playing:
                     outdata.fill(0)
                     raise sd.CallbackStop()
 
+                # Check if we've reached the end of the region
                 remaining = self._end_frame - self._current_frame
                 if remaining <= 0:
                     outdata.fill(0)
                     self._is_playing = False
                     raise sd.CallbackStop()
 
+                # Copy audio data to output buffer
                 chunk_size = min(frames, remaining)
                 outdata[:chunk_size, 0] = mono[self._current_frame:self._current_frame + chunk_size]
+
+                # Zero-fill any remaining buffer space
                 if chunk_size < frames:
                     outdata[chunk_size:].fill(0)
 
+                # Advance playback position
                 self._current_frame += chunk_size
 
-                # Notify position change
+                # Notify position change (called from audio thread)
+                # Note: For proper thread safety, this should use Qt signals
+                # to marshal the callback to the main thread
                 if self._on_position_changed:
                     current_time = self._current_frame / sr
-                    # Schedule callback on main thread would be better
-                    # but for now direct call
                     self._on_position_changed(current_time)
 
         def finished_callback():
+            """Called when the stream finishes (from audio thread)."""
             self._is_playing = False
             if self._on_playback_finished:
                 self._on_playback_finished()
