@@ -30,6 +30,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Updating
+
+```bash
+cd ozen
+git pull
+pip install -r requirements.txt  # if dependencies changed
+```
+
 ## Usage
 
 ### Basic Usage
