@@ -61,11 +61,17 @@ python -m ozen audio.wav annotations.TextGrid
 
 ```bash
 # Create tiers automatically when audio loads
-python -m ozen audio.wav --tiers words,phones
-
-# Short form
 python -m ozen audio.wav -t words,phones
 ```
+
+### With Custom Config File
+
+```bash
+# Use a custom configuration file
+python -m ozen audio.wav -c myconfig.yaml
+```
+
+Config files can customize colors, formant presets, default tiers, and more. See `ozen/config.py` for available options.
 
 ## Keyboard Shortcuts
 
