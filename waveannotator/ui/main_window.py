@@ -214,6 +214,24 @@ class MainWindow(QMainWindow):
         self._hnr_check.toggled.connect(lambda v: self._spectrogram.set_track_visible('hnr', v))
         overlay_layout.addWidget(self._hnr_check)
 
+        self._tilt_check = QCheckBox("Tilt")
+        self._tilt_check.setChecked(False)
+        self._tilt_check.setToolTip("Spectral tilt (low vs high frequency energy)")
+        self._tilt_check.toggled.connect(lambda v: self._spectrogram.set_track_visible('spectral_tilt', v))
+        overlay_layout.addWidget(self._tilt_check)
+
+        self._a1p0_check = QCheckBox("A1-P0")
+        self._a1p0_check.setChecked(False)
+        self._a1p0_check.setToolTip("A1-P0 nasal ratio: amplitude at F0 minus amplitude at ~250Hz (requires voicing)")
+        self._a1p0_check.toggled.connect(lambda v: self._spectrogram.set_track_visible('a1p0', v))
+        overlay_layout.addWidget(self._a1p0_check)
+
+        self._nasal_murmur_check = QCheckBox("NMR")
+        self._nasal_murmur_check.setChecked(False)
+        self._nasal_murmur_check.setToolTip("Nasal murmur ratio: low-freq energy (0-500Hz) / total energy (0-5000Hz)")
+        self._nasal_murmur_check.toggled.connect(lambda v: self._spectrogram.set_track_visible('nasal_murmur', v))
+        overlay_layout.addWidget(self._nasal_murmur_check)
+
         layout.addWidget(overlay_group)
 
         # Extract features button
@@ -847,7 +865,7 @@ class MainWindow(QMainWindow):
         for name in tier_names:
             self._annotations.add_tier(name)
         self._annotation_editor.set_annotations(self._annotations)
-        self._is_dirty = True
+        # Don't mark as dirty - empty tiers are not unsaved work
         self._update_window_title()
         self._autosave_timer.start()
         self._status_bar.showMessage(
@@ -857,7 +875,7 @@ class MainWindow(QMainWindow):
     def _setup_textgrid_path(self, file_path: str):
         """Setup a TextGrid path for saving (may be new or existing file)."""
         self._textgrid_path = file_path
-        self._is_dirty = True
+        # Don't mark as dirty - just setting up a path is not unsaved work
         self._update_window_title()
         self._autosave_timer.start()
 

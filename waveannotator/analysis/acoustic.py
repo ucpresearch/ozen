@@ -27,6 +27,7 @@ class AcousticFeatures:
     kurtosis: np.ndarray  # Spectral kurtosis
     nasal_murmur_ratio: np.ndarray  # Low-freq energy ratio
     spectral_tilt: np.ndarray  # Spectral tilt
+    nasal_ratio: np.ndarray  # A1-P0 nasal ratio (dB)
 
 
 def extract_features(
@@ -97,6 +98,7 @@ def extract_features(
     kurt_vals = np.full(n_frames, np.nan)
     nasal_vals = np.full(n_frames, np.nan)
     tilt_vals = np.full(n_frames, np.nan)
+    a1p0_vals = np.full(n_frames, np.nan)  # A1-P0 nasal ratio
 
     window_duration = 0.025
 
@@ -146,6 +148,20 @@ def extract_features(
         else:
             tilt_vals[i] = np.nan
 
+        # A1-P0 nasal ratio: amplitude of first harmonic minus nasal pole amplitude
+        # A1 is at F0 frequency, P0 is in the ~250 Hz nasal region
+        if f0_val and not np.isnan(f0_val) and f0_val > 0:
+            # Get amplitude at F0 (A1 - first harmonic)
+            a1_amp = call(spectrum, "Get band energy", f0_val * 0.9, f0_val * 1.1)
+            # Get amplitude at nasal pole region (around 250 Hz, typical P0 region)
+            p0_amp = call(spectrum, "Get band energy", 200, 300)
+            if a1_amp > 0 and p0_amp > 0:
+                a1p0_vals[i] = 10 * np.log10(a1_amp) - 10 * np.log10(p0_amp)
+            else:
+                a1p0_vals[i] = np.nan
+        else:
+            a1p0_vals[i] = np.nan
+
     if progress_callback:
         progress_callback(1.0)
 
@@ -181,7 +197,8 @@ def extract_features(
         skewness=skew_vals,
         kurtosis=kurt_vals,
         nasal_murmur_ratio=nasal_vals,
-        spectral_tilt=tilt_vals
+        spectral_tilt=tilt_vals,
+        nasal_ratio=a1p0_vals
     )
 
 

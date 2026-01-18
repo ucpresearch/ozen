@@ -91,6 +91,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             'intensity': False,
             'cog': False,
             'hnr': False,
+            'spectral_tilt': False,
+            'a1p0': False,  # A1-P0 nasal ratio (requires voicing)
+            'nasal_murmur': False,  # Low-freq energy ratio
         }
 
         self._setup_layout()
@@ -217,6 +220,27 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         )
         self._plot.addItem(self._hnr_curve)
 
+        # Spectral tilt - orange line
+        self._tilt_curve = pg.PlotCurveItem(
+            pen=pg.mkPen(color=(255, 140, 0), width=3),
+            name='Spectral Tilt'
+        )
+        self._plot.addItem(self._tilt_curve)
+
+        # A1-P0 nasal ratio - cyan line (requires voicing)
+        self._a1p0_curve = pg.PlotCurveItem(
+            pen=pg.mkPen(color=(0, 200, 200), width=3),
+            name='A1-P0'
+        )
+        self._plot.addItem(self._a1p0_curve)
+
+        # Nasal murmur ratio - magenta dashed line
+        self._nasal_murmur_curve = pg.PlotCurveItem(
+            pen=pg.mkPen(color=(200, 0, 200), width=3, style=Qt.PenStyle.DashLine),
+            name='Nasal Murmur'
+        )
+        self._plot.addItem(self._nasal_murmur_curve)
+
     def _setup_cursor(self):
         """Setup playback cursor."""
         self._cursor_line = pg.InfiniteLine(
@@ -225,6 +249,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             pen=pg.mkPen(color=(200, 0, 0), width=2),
             movable=False
         )
+        self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
         self._plot.addItem(self._cursor_line)
 
     def set_spectrogram(
@@ -408,6 +433,57 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         else:
             self._hnr_curve.hide()
 
+        # Spectral tilt (dB, typically -20 to +20 range)
+        if self._track_visibility['spectral_tilt'] and self._frequencies is not None:
+            valid = ~np.isnan(f.spectral_tilt)
+            f_start = self._freq_start
+            f_end = self._freq_end
+            freq_range = f_end - f_start
+            # Map spectral tilt (-20 to +40 dB) to frequency range
+            scaled_tilt = (f.spectral_tilt + 20) / 60 * freq_range + f_start
+            scaled_tilt = np.clip(scaled_tilt, f_start, f_end)
+            self._tilt_curve.setData(f.times[valid], scaled_tilt[valid])
+            self._tilt_curve.show()
+        else:
+            self._tilt_curve.hide()
+
+        # A1-P0 nasal ratio (requires voicing/pitch detection)
+        if self._track_visibility['a1p0'] and self._frequencies is not None:
+            try:
+                valid = ~np.isnan(f.nasal_ratio)
+                if np.any(valid):
+                    f_start = self._freq_start
+                    f_end = self._freq_end
+                    freq_range = f_end - f_start
+                    # A1-P0 in dB: map -20 to +20 range
+                    scaled_a1p0 = (f.nasal_ratio + 20) / 40 * freq_range + f_start
+                    scaled_a1p0 = np.clip(scaled_a1p0, f_start, f_end)
+                    self._a1p0_curve.setData(f.times[valid], scaled_a1p0[valid])
+                    self._a1p0_curve.show()
+                else:
+                    self._a1p0_curve.hide()
+            except AttributeError:
+                self._a1p0_curve.hide()
+        else:
+            self._a1p0_curve.hide()
+
+        # Nasal murmur ratio (low-freq energy / total energy)
+        if self._track_visibility['nasal_murmur'] and self._frequencies is not None:
+            valid = ~np.isnan(f.nasal_murmur_ratio)
+            if np.any(valid):
+                f_start = self._freq_start
+                f_end = self._freq_end
+                freq_range = f_end - f_start
+                # Murmur ratio 0-1: direct mapping to frequency range
+                scaled_murmur = f.nasal_murmur_ratio * freq_range + f_start
+                scaled_murmur = np.clip(scaled_murmur, f_start, f_end)
+                self._nasal_murmur_curve.setData(f.times[valid], scaled_murmur[valid])
+                self._nasal_murmur_curve.show()
+            else:
+                self._nasal_murmur_curve.hide()
+        else:
+            self._nasal_murmur_curve.hide()
+
     def set_track_visible(self, track_name: str, visible: bool):
         """Set visibility of an overlay track."""
         if track_name in self._track_visibility:
@@ -493,10 +569,16 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        """Handle mouse move for selection and info display."""
+        """Handle mouse move for selection, cursor tracking, and info display."""
         scene_pos = self.mapToScene(ev.position().toPoint())
         view_pos = self._plot.vb.mapSceneToView(scene_pos)
         x, y = view_pos.x(), view_pos.y()
+
+        # Update cursor position on hover
+        if self._duration > 0:
+            self._cursor_time = x
+            self._cursor_line.setPos(x)
+            self.cursor_moved.emit(x)
 
         # Update info label with acoustic values
         if self._features is not None:
@@ -642,10 +724,15 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             if not np.isnan(f.intensity[time_idx]):
                 values['Intensity'] = f"{f.intensity[time_idx]:.1f} dB"
 
-            # Formants
+            # Formants with bandwidths
             for key in ['F1', 'F2', 'F3', 'F4']:
                 if key in f.formants and not np.isnan(f.formants[key][time_idx]):
-                    values[key] = f"{f.formants[key][time_idx]:.0f} Hz"
+                    formant_val = f"{f.formants[key][time_idx]:.0f} Hz"
+                    # Add bandwidth if available
+                    bw_key = 'B' + key[1]  # F1 -> B1, etc.
+                    if bw_key in f.bandwidths and not np.isnan(f.bandwidths[bw_key][time_idx]):
+                        formant_val += f" (bw:{f.bandwidths[bw_key][time_idx]:.0f})"
+                    values[key] = formant_val
 
             # HNR
             if not np.isnan(f.hnr[time_idx]):
@@ -654,6 +741,21 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             # CoG
             if not np.isnan(f.cog[time_idx]):
                 values['CoG'] = f"{f.cog[time_idx]:.0f} Hz"
+
+            # Spectral tilt
+            if not np.isnan(f.spectral_tilt[time_idx]):
+                values['Tilt'] = f"{f.spectral_tilt[time_idx]:.1f} dB"
+
+            # Nasal ratio (A1-P0) - requires pitch detection
+            try:
+                if not np.isnan(f.nasal_ratio[time_idx]):
+                    values['A1-P0'] = f"{f.nasal_ratio[time_idx]:.1f} dB"
+            except AttributeError:
+                pass  # Old features without nasal_ratio
+
+            # Nasal murmur ratio (low-freq energy ratio)
+            if not np.isnan(f.nasal_murmur_ratio[time_idx]):
+                values['Nasal'] = f"{f.nasal_murmur_ratio[time_idx]:.2f}"
 
         return values
 

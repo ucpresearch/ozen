@@ -393,6 +393,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
             pen=pg.mkPen(color=(200, 0, 0), width=2),
             movable=False
         )
+        self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
         self.addItem(self._cursor_line)
 
     def _setup_selection(self):

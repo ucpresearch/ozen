@@ -32,6 +32,9 @@ class WaveformWidget(pg.PlotWidget):
         self._setup_cursor()
         self._setup_selection()
 
+        # Enable mouse tracking for cursor updates on hover
+        self.setMouseTracking(True)
+
     def _setup_plot(self):
         """Configure the plot appearance (Praat-like: white bg, black plot)."""
         self.setBackground('w')  # White background
@@ -69,6 +72,7 @@ class WaveformWidget(pg.PlotWidget):
             pen=pg.mkPen(color=(200, 0, 0), width=2),
             movable=False
         )
+        self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
         self.addItem(self._cursor_line)
 
     def _setup_selection(self):
@@ -181,10 +185,18 @@ class WaveformWidget(pg.PlotWidget):
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        """Handle mouse move for selection."""
+        """Handle mouse move for selection and cursor tracking."""
+        pos = self.plotItem.vb.mapSceneToView(ev.position())
+        x = pos.x()
+
+        # Update cursor position on hover
+        if self._audio_data is not None:
+            self._cursor_time = x
+            self._cursor_line.setPos(x)
+            self.cursor_moved.emit(x)
+
         if self._is_dragging and self._selection_start is not None:
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
-            self._selection_region.setRegion([self._selection_start, pos.x()])
+            self._selection_region.setRegion([self._selection_start, x])
             ev.accept()
         else:
             super().mouseMoveEvent(ev)
