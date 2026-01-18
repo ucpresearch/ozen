@@ -2,6 +2,11 @@
 
 A Python-based acoustic analysis and annotation tool inspired by Praat, built for rapid waveform annotation with extended acoustic measurements.
 
+## Authors
+
+- **Uriel Cohen Priva** ([@ucpresearch](https://github.com/ucpresearch)) - Design, testing, and vibe-coding
+- **Claude** (Anthropic) - Implementation
+
 ## Features
 
 - **Waveform and Spectrogram Display** - Synchronized views with zoom/pan
@@ -14,7 +19,7 @@ A Python-based acoustic analysis and annotation tool inspired by Praat, built fo
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/ucpresearch/ozen.git
 cd ozen
 
 # Create and activate virtual environment
@@ -126,4 +131,4 @@ python -m ozen audio.wav -t words phones
 
 ## License
 
-See LICENSE file for details.
+MIT License - see [LICENSE](LICENSE) for details.
