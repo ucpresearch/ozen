@@ -534,7 +534,7 @@ class MainWindow(QMainWindow):
         self._annotation_editor.interval_text_changed.connect(self._mark_dirty)
 
         # Player callbacks
-        self._player.set_position_callback(self._on_playback_position)
+        # Position updates are handled by _playback_timer polling current_time
         # Use signal for thread-safe callback from audio thread
         self._player.set_finished_callback(lambda: self._playback_finished_signal.emit())
 
@@ -855,11 +855,6 @@ class MainWindow(QMainWindow):
             self._spectrogram.set_cursor_position(time)
             self._annotation_editor.set_cursor_position(time)
             self._time_label.setText(f"Time: {time:.3f}s")
-
-    def _on_playback_position(self, time: float):
-        """Handle position updates from player."""
-        # This is called from audio thread, handled by timer instead
-        pass
 
     def _on_playback_finished(self):
         """Handle playback finished."""

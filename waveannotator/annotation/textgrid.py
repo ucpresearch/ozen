@@ -7,6 +7,30 @@ from typing import TextIO
 from .tier import Tier, AnnotationSet
 
 
+def _unescape_praat_string(s: str) -> str:
+    """
+    Unescape a Praat text string.
+
+    In Praat TextGrid format, strings are quoted with double quotes,
+    and a literal quote within the string is represented as two quotes ("").
+    This function removes the outer quotes and unescapes inner quotes.
+    """
+    # Remove outer quotes if present
+    if s.startswith('"') and s.endswith('"'):
+        s = s[1:-1]
+    # Unescape doubled quotes
+    return s.replace('""', '"')
+
+
+def _escape_praat_string(s: str) -> str:
+    """
+    Escape a string for Praat TextGrid format.
+
+    Escapes literal quotes as "" and wraps in outer quotes.
+    """
+    return '"' + s.replace('"', '""') + '"'
+
+
 def read_textgrid(file_path: str | Path) -> AnnotationSet:
     """Read a Praat TextGrid file.
 
@@ -36,9 +60,13 @@ def _read_textgrid_long(content: str) -> AnnotationSet:
     xmin = xmax = 0.0
     for line in lines[:10]:
         if 'xmin' in line:
-            xmin = float(re.search(r'[\d.]+', line).group())
+            match = re.search(r'[\d.]+', line)
+            if match:
+                xmin = float(match.group())
         elif 'xmax' in line:
-            xmax = float(re.search(r'[\d.]+', line).group())
+            match = re.search(r'[\d.]+', line)
+            if match:
+                xmax = float(match.group())
             break
 
     annotations = AnnotationSet(duration=xmax)
@@ -58,13 +86,14 @@ def _read_textgrid_long(content: str) -> AnnotationSet:
 
         # Extract tier info
         class_match = re.search(r'class\s*=\s*"(\w+)"', tier_block)
-        name_match = re.search(r'name\s*=\s*"([^"]*)"', tier_block)
+        name_match = re.search(r'name\s*=\s*"((?:[^"]|"")*)"', tier_block)
 
         if not class_match:
             continue
 
         tier_class = class_match.group(1)
-        tier_name = name_match.group(1) if name_match else f"Tier {i+1}"
+        # Unescape doubled quotes in tier name
+        tier_name = name_match.group(1).replace('""', '"') if name_match else f"Tier {i+1}"
 
         if tier_class == "IntervalTier":
             tier = annotations.add_tier(tier_name)
@@ -77,11 +106,12 @@ def _read_textgrid_long(content: str) -> AnnotationSet:
 def _parse_interval_tier_long(block: str, tier: Tier):
     """Parse intervals from a long-format tier block."""
     # Find all intervals
+    # The text pattern handles escaped quotes: "" represents a literal "
     interval_pattern = re.compile(
         r'intervals\s*\[\d+\]:\s*\n'
         r'\s*xmin\s*=\s*([\d.]+)\s*\n'
         r'\s*xmax\s*=\s*([\d.]+)\s*\n'
-        r'\s*text\s*=\s*"([^"]*)"',
+        r'\s*text\s*=\s*"((?:[^"]|"")*)"',
         re.MULTILINE
     )
 
@@ -89,7 +119,8 @@ def _parse_interval_tier_long(block: str, tier: Tier):
     for match in interval_pattern.finditer(block):
         xmin = float(match.group(1))
         xmax = float(match.group(2))
-        text = match.group(3)
+        # Unescape doubled quotes: "" -> "
+        text = match.group(3).replace('""', '"')
         intervals.append((xmin, xmax, text))
 
     # Sort by start time
@@ -149,11 +180,11 @@ def _read_textgrid_short(content: str) -> AnnotationSet:
             break
 
         # Tier type
-        tier_type = lines[idx].strip('"')
+        tier_type = _unescape_praat_string(lines[idx])
         idx += 1
 
         # Tier name
-        tier_name = lines[idx].strip('"') if idx < len(lines) else ""
+        tier_name = _unescape_praat_string(lines[idx]) if idx < len(lines) else ""
         idx += 1
 
         # Tier xmin, xmax
@@ -180,7 +211,7 @@ def _read_textgrid_short(content: str) -> AnnotationSet:
                 idx += 1
                 int_xmax = float(lines[idx])
                 idx += 1
-                text = lines[idx].strip('"')
+                text = _unescape_praat_string(lines[idx])
                 idx += 1
 
                 if j > 0:
@@ -225,7 +256,7 @@ def _write_textgrid_long(annotations: AnnotationSet, f: TextIO):
     for i, tier in enumerate(annotations.get_tiers()):
         f.write(f'    item [{i + 1}]:\n')
         f.write(f'        class = "IntervalTier"\n')
-        f.write(f'        name = "{tier.name}"\n')
+        f.write(f'        name = {_escape_praat_string(tier.name)}\n')
         f.write(f'        xmin = {tier.start_time}\n')
         f.write(f'        xmax = {tier.end_time}\n')
         f.write(f'        intervals: size = {tier.num_intervals}\n')
@@ -234,9 +265,7 @@ def _write_textgrid_long(annotations: AnnotationSet, f: TextIO):
             f.write(f'        intervals [{j + 1}]:\n')
             f.write(f'            xmin = {interval.start}\n')
             f.write(f'            xmax = {interval.end}\n')
-            # Escape quotes in text
-            text = interval.text.replace('"', '""')
-            f.write(f'            text = "{text}"\n')
+            f.write(f'            text = {_escape_praat_string(interval.text)}\n')
 
 
 def _write_textgrid_short(annotations: AnnotationSet, f: TextIO):
@@ -251,7 +280,7 @@ def _write_textgrid_short(annotations: AnnotationSet, f: TextIO):
 
     for tier in annotations.get_tiers():
         f.write('"IntervalTier"\n')
-        f.write(f'"{tier.name}"\n')
+        f.write(f'{_escape_praat_string(tier.name)}\n')
         f.write(f'{tier.start_time}\n')
         f.write(f'{tier.end_time}\n')
         f.write(f'{tier.num_intervals}\n')
@@ -259,8 +288,7 @@ def _write_textgrid_short(annotations: AnnotationSet, f: TextIO):
         for interval in tier.get_intervals():
             f.write(f'{interval.start}\n')
             f.write(f'{interval.end}\n')
-            text = interval.text.replace('"', '""')
-            f.write(f'"{text}"\n')
+            f.write(f'{_escape_praat_string(interval.text)}\n')
 
 
 def read_tsv(file_path: str | Path) -> AnnotationSet:

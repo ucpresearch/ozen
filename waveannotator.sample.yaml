@@ -1,126 +1,38 @@
 colors:
-  waveform_background:
-  - 255
-  - 255
-  - 255
-  - 255
-  waveform_line:
-  - 0
-  - 0
-  - 0
-  - 255
+  waveform_background: [255, 255, 255, 255]
+  waveform_line: [0, 0, 0, 255]
   waveform_line_width: 2
-  cursor:
-  - 200
-  - 0
-  - 0
-  - 255
+  cursor: [200, 0, 0, 255]
   cursor_width: 2
-  selection_fill:
-  - 180
-  - 180
-  - 255
-  - 100
-  selection_border:
-  - 80
-  - 80
-  - 180
-  - 255
+  selection_fill: [180, 180, 255, 100]
+  selection_border: [80, 80, 180, 255]
   selection_border_width: 2
-  pitch:
-  - 0
-  - 100
-  - 255
-  - 255
+  pitch: [0, 100, 255, 255]
   pitch_width: 2
-  intensity:
-  - 255
-  - 200
-  - 0
-  - 255
+  intensity: [255, 200, 0, 255]
   intensity_width: 2
-  formant:
-  - 255
-  - 0
-  - 0
-  - 255
-  formant_wide:
-  - 255
-  - 150
-  - 150
-  - 255
-  formant_size: 4
-  cog:
-  - 0
-  - 200
-  - 0
-  - 255
+  formant: [255, 0, 0, 255]
+  formant_wide: [255, 150, 150, 255]
+  formant_size: 8
+  cog: [0, 200, 0, 255]
   cog_width: 2
-  hnr:
-  - 180
-  - 0
-  - 220
-  - 255
+  hnr: [180, 0, 220, 255]
   hnr_width: 3
-  spectral_tilt:
-  - 255
-  - 140
-  - 0
-  - 255
+  spectral_tilt: [255, 140, 0, 255]
   spectral_tilt_width: 3
-  a1p0:
-  - 0
-  - 200
-  - 200
-  - 255
+  a1p0: [0, 200, 200, 255]
   a1p0_width: 3
-  nasal_murmur:
-  - 200
-  - 0
-  - 200
-  - 255
+  nasal_murmur: [160, 82, 45, 255]
   nasal_murmur_width: 3
-  tier_background:
-  - 240
-  - 240
-  - 240
-  - 255
-  tier_border:
-  - 100
-  - 100
-  - 100
-  - 255
-  tier_selected:
-  - 200
-  - 220
-  - 255
-  - 255
-  boundary:
-  - 0
-  - 100
-  - 200
-  - 255
-  boundary_hover:
-  - 255
-  - 150
-  - 0
-  - 255
+  tier_background: [240, 240, 240, 255]
+  tier_border: [100, 100, 100, 255]
+  tier_selected: [200, 220, 255, 255]
+  boundary: [0, 100, 200, 255]
+  boundary_hover: [255, 150, 0, 255]
   boundary_width: 2
-  interval_text:
-  - 0
-  - 0
-  - 0
-  - 255
-  play_button:
-  - 0
-  - 120
-  - 0
-  - 230
-  play_button_hover:
-  - 0
-  - 180
-  - 0
-  - 255
+  interval_text: [0, 0, 0, 255]
+  play_button: [0, 120, 0, 230]
+  play_button_hover: [0, 180, 0, 255]
 formant_presets:
   female:
     max_formant: 5500
@@ -161,10 +73,7 @@ spectrogram:
   wideband_window: 0.005
   dynamic_range: 70.0
   default_max_frequency: 5000
-  max_frequency_options:
-  - 5000
-  - 7500
-  - 10000
+  max_frequency_options: [5000, 7500, 10000]
 pitch:
   display_floor: 50
   display_ceiling: 800
@@ -187,6 +96,7 @@ spectral_tilt:
   high_band_start: 2000
   high_band_end: 4000
 annotation:
+  default_tiers: []
   max_tiers: 5
   tier_height: 60
   boundary_snap_threshold: 0.015

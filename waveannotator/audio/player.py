@@ -62,7 +62,12 @@ class AudioPlayer:
         self._end_frame = len(audio_data.samples)
 
     def set_position_callback(self, callback: Callable[[float], None]):
-        """Set callback for position updates during playback."""
+        """Set callback for position updates during playback.
+
+        Note: This callback is no longer called from the audio thread
+        to avoid thread-safety issues. Use the current_time property
+        with a QTimer for position updates instead.
+        """
         self._on_position_changed = callback
 
     def set_finished_callback(self, callback: Callable[[], None]):
@@ -155,12 +160,9 @@ class AudioPlayer:
                 # Advance playback position
                 self._current_frame += chunk_size
 
-                # Notify position change (called from audio thread)
-                # Note: For proper thread safety, this should use Qt signals
-                # to marshal the callback to the main thread
-                if self._on_position_changed:
-                    current_time = self._current_frame / sr
-                    self._on_position_changed(current_time)
+                # Note: Position updates are handled by the UI via polling
+                # (current_time property) rather than callbacks, to avoid
+                # thread-safety issues with calling Qt code from the audio thread.
 
         def finished_callback():
             """Called when the stream finishes (from audio thread)."""

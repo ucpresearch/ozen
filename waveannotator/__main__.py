@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 
 from .ui.main_window import MainWindow
-from .config import reload_config
+from . import config as config_module
 
 
 def parse_args():
@@ -91,7 +91,7 @@ def main() -> int:
 
     # Load custom config if specified (must happen before MainWindow is created)
     if args.config:
-        reload_config(args.config)
+        config_module.reload_config(args.config)
 
     # Initialize Qt application
     app = QApplication(sys.argv)
@@ -116,9 +116,12 @@ def main() -> int:
                     # and prompting to create new ones
                     window.setup_textgrid_from_path(args.textgrid_file, args.tiers)
 
-            # If no TextGrid but tier names specified, create empty tiers
-            elif args.tiers:
-                window._create_predefined_tiers(args.tiers)
+            # If no TextGrid, use command-line tiers or config default_tiers
+            else:
+                # Command-line tiers take priority over config default_tiers
+                tiers = args.tiers or config_module.config['annotation'].get('default_tiers', [])
+                if tiers:
+                    window._create_predefined_tiers(tiers)
 
     if args.audio_file:
         # Defer file loading until after the Qt event loop starts

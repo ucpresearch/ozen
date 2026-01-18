@@ -294,25 +294,28 @@ def _filter_formant(
 def _median_filter(data: np.ndarray, window: int = 3) -> np.ndarray:
     """
     Apply median filter to smooth outliers while preserving NaN values.
+
+    Uses nanmedian to properly ignore NaN values in the median calculation,
+    avoiding distortion near gaps.
     """
-    from scipy.ndimage import median_filter as scipy_median
-
     result = data.copy()
+    n = len(data)
+    half_window = window // 2
 
-    # Only filter non-NaN values
-    valid = ~np.isnan(data)
-    if np.sum(valid) < window:
-        return result
+    for i in range(n):
+        if np.isnan(data[i]):
+            continue  # Preserve NaN positions
 
-    # Create a version with NaN replaced by interpolation for filtering
-    temp = data.copy()
+        # Get window bounds
+        start = max(0, i - half_window)
+        end = min(n, i + half_window + 1)
 
-    # Simple approach: filter and keep NaN positions
-    # Use scipy's median filter on valid stretches
-    filtered = scipy_median(np.nan_to_num(data, nan=0), size=window)
+        # Compute median ignoring NaN values
+        window_data = data[start:end]
+        median_val = np.nanmedian(window_data)
 
-    # Only update positions that were originally valid
-    result[valid] = filtered[valid]
+        if not np.isnan(median_val):
+            result[i] = median_val
 
     return result
 

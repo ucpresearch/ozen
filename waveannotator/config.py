@@ -27,6 +27,18 @@ import copy
 try:
     import yaml
     HAS_YAML = True
+
+    # Custom representer for compact list output (colors, short lists)
+    def _represent_list(dumper, data):
+        """Represent short lists of numbers in flow style [1, 2, 3, 4]."""
+        # Use flow style for short lists of numbers (like RGBA colors)
+        if len(data) <= 5 and all(isinstance(x, (int, float)) for x in data):
+            return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=False)
+
+    # Register the custom representer
+    yaml.add_representer(list, _represent_list)
+
 except ImportError:
     HAS_YAML = False
     import json
@@ -62,7 +74,7 @@ DEFAULTS = {
         'intensity_width': 2,
         'formant': [255, 0, 0, 255],  # Red (narrow bandwidth)
         'formant_wide': [255, 150, 150, 255],  # Pink (wide bandwidth)
-        'formant_size': 4,
+        'formant_size': 8,
         'cog': [0, 200, 0, 255],  # Green
         'cog_width': 2,
         'hnr': [180, 0, 220, 255],  # Purple
@@ -71,7 +83,7 @@ DEFAULTS = {
         'spectral_tilt_width': 3,
         'a1p0': [0, 200, 200, 255],  # Cyan
         'a1p0_width': 3,
-        'nasal_murmur': [200, 0, 200, 255],  # Magenta
+        'nasal_murmur': [160, 82, 45, 255],  # Brown/sienna
         'nasal_murmur_width': 3,
 
         # Annotation editor
@@ -178,6 +190,7 @@ DEFAULTS = {
     # Annotation settings
     # -------------------------------------------------------------------------
     'annotation': {
+        'default_tiers': [],  # Tier names to create automatically (e.g., ['words', 'phones'])
         'max_tiers': 5,
         'tier_height': 60,  # Approximate height in pixels
         'boundary_snap_threshold': 0.015,  # Snap to boundary within 15ms

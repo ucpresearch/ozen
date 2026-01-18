@@ -231,17 +231,17 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         # Formants - color fades based on bandwidth (narrow=red, wide=pink)
         self._formant_items = {}
-        formant_sizes = {'F1': 10, 'F2': 10, 'F3': 9, 'F4': 7}
+        formant_size = colors['formant_size']
 
         for formant_key in ['F1', 'F2', 'F3', 'F4']:
             scatter = pg.ScatterPlotItem(
                 pen=None,
                 brush=pg.mkBrush(*colors['formant']),
-                size=formant_sizes[formant_key],
+                size=formant_size,
                 name=formant_key
             )
             self._plot.addItem(scatter)
-            self._formant_items[formant_key] = {'scatter': scatter, 'size': formant_sizes[formant_key]}
+            self._formant_items[formant_key] = {'scatter': scatter, 'size': formant_size}
 
         # Center of Gravity
         self._cog_curve = pg.PlotCurveItem(
@@ -412,7 +412,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         # Formants with bandwidth-based coloring (higher bandwidth = more pink/white)
         if self._track_visibility['formants']:
-            bw_keys = {'F1': 'B1', 'F2': 'B2', 'F3': 'B3', 'F4': None}
+            bw_keys = {'F1': 'B1', 'F2': 'B2', 'F3': 'B3', 'F4': 'B4'}
             # Bandwidth thresholds for color scaling
             bw_min = 50   # Below this = full red
             bw_max = 400  # Above this = full pink/white
