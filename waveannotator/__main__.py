@@ -5,7 +5,11 @@ This module provides the command-line interface for launching WaveAnnotator.
 It handles argument parsing and initializes the Qt application.
 
 Usage:
-    python -m waveannotator [audio_file] [textgrid_file] [--tiers tier1 tier2 ...]
+    python -m waveannotator [audio_file] [textgrid_file] [options]
+
+Options:
+    --tiers, -t     Predefined tier names to create
+    --config, -c    Path to custom config file (YAML or JSON)
 
 Examples:
     # Open the application
@@ -19,6 +23,9 @@ Examples:
 
     # Open with audio and create new TextGrid with predefined tiers
     python -m waveannotator recording.wav --tiers words phones
+
+    # Use a custom config file
+    python -m waveannotator recording.wav --config myconfig.yaml
 """
 
 import sys
@@ -29,6 +36,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 
 from .ui.main_window import MainWindow
+from .config import reload_config
 
 
 def parse_args():
@@ -40,6 +48,7 @@ def parse_args():
             - audio_file: Path to audio file (optional)
             - textgrid_file: Path to TextGrid file (optional)
             - tiers: List of tier names to create (optional)
+            - config: Path to custom config file (optional)
     """
     parser = argparse.ArgumentParser(
         description="WaveAnnotator - Audio annotation tool"
@@ -59,6 +68,10 @@ def parse_args():
         nargs="+",
         help="Predefined tier names (e.g., --tiers words phones)"
     )
+    parser.add_argument(
+        "--config", "-c",
+        help="Path to custom config file (YAML or JSON)"
+    )
     return parser.parse_args()
 
 
@@ -75,6 +88,10 @@ def main() -> int:
         Exit code from the Qt application (0 for success)
     """
     args = parse_args()
+
+    # Load custom config if specified (must happen before MainWindow is created)
+    if args.config:
+        reload_config(args.config)
 
     # Initialize Qt application
     app = QApplication(sys.argv)

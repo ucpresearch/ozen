@@ -247,20 +247,33 @@ def _load_config_file(path: Path) -> dict:
             return json.load(f)
 
 
-def load_config() -> dict:
+def load_config(config_path: Path | str | None = None) -> dict:
     """
     Load configuration with user overrides.
+
+    Args:
+        config_path: Optional explicit path to config file. If provided,
+                     this file will be loaded instead of searching default locations.
 
     Returns a dict with all settings, using defaults for any
     values not specified in the user's config file.
     """
     config = copy.deepcopy(DEFAULTS)
 
-    config_file = _find_config_file()
+    # Use explicit path if provided, otherwise search default locations
+    if config_path:
+        config_file = Path(config_path)
+        if not config_file.exists():
+            print(f"Warning: Config file not found: {config_file}")
+            return config
+    else:
+        config_file = _find_config_file()
+
     if config_file:
         try:
             user_config = _load_config_file(config_file)
             config = _deep_merge(config, user_config)
+            print(f"Loaded config from: {config_file}")
         except Exception as e:
             print(f"Warning: Failed to load config from {config_file}: {e}")
 
@@ -293,7 +306,35 @@ def save_default_config(path: Path | str):
 config = load_config()
 
 
-def reload_config():
-    """Reload configuration from file."""
+def reload_config(config_path: Path | str | None = None):
+    """
+    Reload configuration from file.
+
+    Args:
+        config_path: Optional explicit path to config file. If provided,
+                     this file will be loaded instead of searching default locations.
+    """
     global config
-    config = load_config()
+    config = load_config(config_path)
+
+
+def load_config_from_path(path: Path | str) -> dict:
+    """
+    Load configuration from a specific file path.
+
+    Args:
+        path: Path to the config file (YAML or JSON)
+
+    Returns:
+        Merged config dict with defaults
+
+    Raises:
+        FileNotFoundError: If the config file doesn't exist
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    base_config = copy.deepcopy(DEFAULTS)
+    user_config = _load_config_file(path)
+    return _deep_merge(base_config, user_config)
