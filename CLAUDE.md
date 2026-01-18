@@ -215,9 +215,62 @@ Minimum viable version should support:
 - Spectrogram quality not quite matching Praat (harmonics less clear)
 - Waveform/spectrogram alignment may have minor differences
 
+### Recently Fixed (January 2026)
+- Fixed pyqtgraph autorange "A" button showing on all plot widgets (hideButtons())
+- Fixed tier labels not showing when app first opens (added refresh() call in set_annotations())
+- Fixed text items not being cleaned up when tiers are rebuilt
+- Fixed spectrogram tooltip showing when mouse is outside frequency range
+- Fixed Delete key not working for boundary deletion (text editor was capturing keys)
+- Fixed Enter key adding boundaries to wrong tier while text editor was open
+
 ## Future Enhancements
 - Batch processing mode
 - Point tiers (in addition to interval tiers)
 - Export annotations to CSV
 - Spectrogram computed via Praat for exact match (resolution issues to solve)
 - Additional acoustic measures display (spectral tilt, nasal ratio)
+
+## Development Context (for resuming work)
+
+### Key Files by Functionality
+
+**Annotation System:**
+- `waveannotator/annotation/editor.py` - Main annotation editor widget (TierItem, AnnotationEditorWidget)
+- `waveannotator/annotation/tier.py` - Data models (Tier, Interval, AnnotationSet)
+- `waveannotator/annotation/textgrid.py` - TextGrid import/export
+
+**Visualization:**
+- `waveannotator/visualization/waveform.py` - Waveform display (WaveformWidget)
+- `waveannotator/visualization/spectrogram.py` - Spectrogram + acoustic overlays (SpectrogramWidget)
+
+**Main Application:**
+- `waveannotator/ui/main_window.py` - Main window, menu, save system, widget coordination
+- `waveannotator/__main__.py` - CLI argument parsing, app entry point
+
+**Audio/Analysis:**
+- `waveannotator/audio/player.py` - Audio playback with sounddevice
+- `waveannotator/audio/loader.py` - Audio file loading
+- `waveannotator/analysis/acoustic.py` - Feature extraction (pitch, formants, etc.)
+
+### Architecture Notes
+
+- All three display widgets (waveform, spectrogram, annotation editor) are pg.PlotWidget subclasses
+- They synchronize via signals: time_range_changed, cursor_moved, selection_changed
+- The main window connects these signals to keep views in sync
+- Undo system is in editor.py (_undo_stack, _push_undo(), undo())
+- Save system is in main_window.py (_textgrid_path, _is_dirty, auto-save timer)
+
+### Common Patterns
+
+- `hideButtons()` - Hide pyqtgraph's autorange button
+- `setMouseEnabled(x=False, y=False)` - Disable default mouse handling (we implement our own)
+- `refresh()` on annotation editor - Call after any tier/boundary changes
+- TextItem cleanup - Must explicitly removeItem() before clearing lists
+
+### Testing the App
+
+```bash
+cd /home/urielc/local/decfiles/private/Dev/git/waveannotator
+source .venv/bin/activate
+python -m waveannotator [audio.wav] [annotations.TextGrid] [-t tier1 tier2...]
+```
