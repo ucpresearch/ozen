@@ -3,7 +3,7 @@ Spectrogram display widget with overlay tracks.
 
 This module provides the SpectrogramWidget class for displaying spectrograms
 with acoustic feature overlays. It's designed for speech analysis and
-integrates with the rest of WaveAnnotator.
+integrates with the rest of Ozen.
 
 Features:
     - Time-frequency spectrogram display (computed externally)

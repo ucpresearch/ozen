@@ -2,7 +2,7 @@
 Waveform display widget using pyqtgraph.
 
 This module provides the WaveformWidget class for displaying audio waveforms.
-The widget is designed to integrate with the rest of WaveAnnotator through
+The widget is designed to integrate with the rest of Ozen through
 signals for synchronizing cursor position, selection, and view range.
 
 Features:

@@ -1,4 +1,4 @@
-# WaveAnnotator
+# Ozen
 
 A Python-based acoustic analysis and annotation tool inspired by Praat, built for rapid waveform annotation with extended acoustic measurements.
 
@@ -15,7 +15,7 @@ A Python-based acoustic analysis and annotation tool inspired by Praat, built fo
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd waveannotator
+cd ozen
 
 # Create and activate virtual environment
 python3 -m venv .venv
@@ -31,27 +31,27 @@ pip install -r requirements.txt
 
 ```bash
 # Open the application
-python -m waveannotator
+python -m ozen
 
 # Open with an audio file
-python -m waveannotator audio.wav
+python -m ozen audio.wav
 ```
 
 ### With TextGrid File
 
 ```bash
 # Import existing TextGrid annotations
-python -m waveannotator audio.wav annotations.TextGrid
+python -m ozen audio.wav annotations.TextGrid
 ```
 
 ### With Predefined Tier Names
 
 ```bash
 # Create tiers automatically when audio loads
-python -m waveannotator audio.wav --tiers words phones syllables
+python -m ozen audio.wav --tiers words phones syllables
 
 # Short form
-python -m waveannotator audio.wav -t words phones
+python -m ozen audio.wav -t words phones
 ```
 
 ## Keyboard Shortcuts

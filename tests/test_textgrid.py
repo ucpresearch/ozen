@@ -6,8 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from waveannotator.annotation.tier import Tier, Interval, AnnotationSet
-from waveannotator.annotation.textgrid import (
+from ozen.annotation.tier import Tier, Interval, AnnotationSet
+from ozen.annotation.textgrid import (
     read_textgrid, write_textgrid, read_tsv, write_tsv
 )
 

@@ -1,17 +1,17 @@
 """
-Configuration management for WaveAnnotator.
+Configuration management for Ozen.
 
 This module provides centralized configuration with sensible defaults
 that can be overridden by a user config file. The config file is loaded
 from (in order of priority):
-    1. ./waveannotator.yaml (current directory)
-    2. ~/.config/waveannotator/config.yaml
-    3. ~/.waveannotator.yaml
+    1. ./ozen.yaml (current directory)
+    2. ~/.config/ozen/config.yaml
+    3. ~/.ozen.yaml
 
 All settings have defaults, so no config file is required.
 
 Usage:
-    from waveannotator.config import config
+    from ozen.config import config
 
     # Access settings
     color = config['colors']['cursor']
@@ -231,12 +231,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def _find_config_file() -> Path | None:
     """Find the user's config file, if it exists."""
     candidates = [
-        Path('./waveannotator.yaml'),
-        Path('./waveannotator.json'),
-        Path.home() / '.config' / 'waveannotator' / 'config.yaml',
-        Path.home() / '.config' / 'waveannotator' / 'config.json',
-        Path.home() / '.waveannotator.yaml',
-        Path.home() / '.waveannotator.json',
+        Path('./ozen.yaml'),
+        Path('./ozen.json'),
+        Path.home() / '.config' / 'ozen' / 'config.yaml',
+        Path.home() / '.config' / 'ozen' / 'config.json',
+        Path.home() / '.ozen.yaml',
+        Path.home() / '.ozen.json',
     ]
 
     for path in candidates:

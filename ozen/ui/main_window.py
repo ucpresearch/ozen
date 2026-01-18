@@ -1,5 +1,5 @@
 """
-Main application window for WaveAnnotator.
+Main application window for Ozen.
 
 This module contains the MainWindow class, which is the central hub of
 the application. It coordinates all the major components:
@@ -110,7 +110,7 @@ class FeatureExtractionThread(QThread):
 
 class MainWindow(QMainWindow):
     """
-    Main application window for WaveAnnotator.
+    Main application window for Ozen.
 
     This is the central class that creates and coordinates all UI components.
     It manages the application state including:
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI layout."""
-        self.setWindowTitle("WaveAnnotator")
+        self.setWindowTitle("Ozen")
         self.setMinimumSize(1200, 800)
 
         # Central widget
@@ -1189,9 +1189,9 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self):
         """Update window title to show file name and dirty state."""
-        title = "WaveAnnotator"
+        title = "Ozen"
         if self._current_file_path:
-            title = f"WaveAnnotator - {Path(self._current_file_path).name}"
+            title = f"Ozen - {Path(self._current_file_path).name}"
         if self._textgrid_path:
             title += f" [{Path(self._textgrid_path).name}]"
         if self._is_dirty:
@@ -1213,7 +1213,7 @@ class MainWindow(QMainWindow):
             backup_path = str(Path(self._current_file_path).parent / backup_path)
         else:
             # Use temp directory
-            backup_path = os.path.join(tempfile.gettempdir(), "waveannotator_autosave.TextGrid")
+            backup_path = os.path.join(tempfile.gettempdir(), "ozen_autosave.TextGrid")
 
         try:
             write_textgrid(self._annotations, backup_path)

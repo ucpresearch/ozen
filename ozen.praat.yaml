@@ -1,5 +1,5 @@
-# Praat-style color configuration for WaveAnnotator
-# Copy this file to waveannotator.yaml in the project directory to use these colors
+# Praat-style color configuration for Ozen
+# Copy this file to ozen.yaml in the project directory to use these colors
 
 colors:
   # Waveform - black on white like Praat

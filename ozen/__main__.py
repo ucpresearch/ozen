@@ -1,11 +1,11 @@
 """
-Entry point for WaveAnnotator.
+Entry point for Ozen.
 
-This module provides the command-line interface for launching WaveAnnotator.
+This module provides the command-line interface for launching Ozen.
 It handles argument parsing and initializes the Qt application.
 
 Usage:
-    python -m waveannotator [audio_file] [textgrid_file] [options]
+    python -m ozen [audio_file] [textgrid_file] [options]
 
 Options:
     --tiers, -t     Predefined tier names to create
@@ -13,19 +13,19 @@ Options:
 
 Examples:
     # Open the application
-    python -m waveannotator
+    python -m ozen
 
     # Open with an audio file
-    python -m waveannotator recording.wav
+    python -m ozen recording.wav
 
     # Open with audio and existing TextGrid
-    python -m waveannotator recording.wav annotations.TextGrid
+    python -m ozen recording.wav annotations.TextGrid
 
     # Open with audio and create new TextGrid with predefined tiers
-    python -m waveannotator recording.wav --tiers words phones
+    python -m ozen recording.wav --tiers words phones
 
     # Use a custom config file
-    python -m waveannotator recording.wav --config myconfig.yaml
+    python -m ozen recording.wav --config myconfig.yaml
 """
 
 import sys
@@ -51,7 +51,7 @@ def parse_args():
             - config: Path to custom config file (optional)
     """
     parser = argparse.ArgumentParser(
-        description="WaveAnnotator - Audio annotation tool"
+        description="Ozen - Audio annotation tool"
     )
     parser.add_argument(
         "audio_file",
@@ -77,7 +77,7 @@ def parse_args():
 
 def main() -> int:
     """
-    Main entry point for the WaveAnnotator application.
+    Main entry point for the Ozen application.
 
     Creates the Qt application, shows the main window, and optionally
     loads files specified on the command line. File loading is deferred
@@ -95,8 +95,8 @@ def main() -> int:
 
     # Initialize Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("WaveAnnotator")
-    app.setOrganizationName("WaveAnnotator")
+    app.setApplicationName("Ozen")
+    app.setOrganizationName("Ozen")
 
     window = MainWindow()
     window.show()

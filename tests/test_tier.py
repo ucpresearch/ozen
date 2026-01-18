@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from waveannotator.annotation.tier import Tier, Interval, AnnotationSet
+from ozen.annotation.tier import Tier, Interval, AnnotationSet
 
 
 def test_interval_basic():
