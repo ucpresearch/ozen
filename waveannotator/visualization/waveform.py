@@ -50,6 +50,8 @@ class WaveformWidget(pg.PlotWidget):
         # Disable default mouse drag (we handle selection ourselves)
         self.setMouseEnabled(x=False, y=False)
         self.plotItem.vb.setDefaultPadding(0)
+        # Hide the autorange "A" button
+        self.plotItem.hideButtons()
 
         # Create the waveform plot item (black line, thicker)
         self._waveform_curve = self.plot(

@@ -131,6 +131,8 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # Disable default mouse drag (we handle selection ourselves)
         self._plot.setMouseEnabled(x=False, y=False)
         self._plot.vb.setDefaultPadding(0)
+        # Hide the autorange "A" button
+        self._plot.hideButtons()
 
         # Connect view range changes
         self._plot.sigXRangeChanged.connect(self._on_x_range_changed)
@@ -657,6 +659,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
     def _update_info_label(self, time: float, freq: float):
         """Update the info label with acoustic values."""
+        # Hide if outside valid frequency range
+        if freq < self._freq_start or freq > self._freq_end:
+            self._info_label.hide()
+            return
+
         lines = [f"Time: {time:.3f}s", f"Freq: {freq:.0f} Hz"]
 
         values = self._get_acoustic_values_at_time(time)

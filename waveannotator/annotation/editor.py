@@ -362,6 +362,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self.plotItem.getAxis('left').setWidth(70)
         self.plotItem.getAxis('left').setStyle(showValues=False)
         self.plotItem.getAxis('left').setTicks([])
+        self.plotItem.setLabel('left', '')  # Clear any left axis label
 
         # Add right axis placeholder for alignment
         self.plotItem.showAxis('right')
@@ -378,6 +379,8 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self.plotItem.vb.setMenuEnabled(False)
         # Disable ViewBox keyboard shortcuts (like 'a' for autorange)
         self.plotItem.vb.state['enableMenu'] = False
+        # Hide the autorange "A" button
+        self.plotItem.hideButtons()
 
         # Connect view range changes
         self.sigXRangeChanged.connect(self._on_x_range_changed)
@@ -410,6 +413,11 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self._duration = annotations.duration
         self._rebuild_tier_items()
         self._update_y_range()
+        # Set X range if we have a valid duration
+        if self._duration > 0:
+            self.setXRange(0, self._duration, padding=0)
+        # Initial refresh to render tier labels
+        self.refresh()
 
     def set_duration(self, duration: float):
         """Set the total duration (for display even without annotations)."""
@@ -420,8 +428,16 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
     def _rebuild_tier_items(self):
         """Rebuild the tier display items."""
-        # Remove old items
+        # Remove old items and their associated text items
         for item in self._tier_items:
+            # Remove text items that were added to the plot
+            for text_item in item._text_items:
+                self.removeItem(text_item)
+            for duration_item in item._duration_items:
+                self.removeItem(duration_item)
+            if item._name_item is not None:
+                self.removeItem(item._name_item)
+            # Remove the tier item itself
             self.removeItem(item)
         self._tier_items.clear()
 
