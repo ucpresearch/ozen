@@ -56,7 +56,7 @@ DEFAULTS = {
         # Waveform widget
         'waveform_background': [255, 255, 255, 255],  # White
         'waveform_line': [0, 0, 0, 255],  # Black
-        'waveform_line_width': 2,
+        'waveform_line_width': 1,  # Note: width > 1 causes audio noise on macOS
 
         # Cursor (playback position indicator)
         'cursor': [200, 0, 0, 255],  # Dark red
@@ -204,6 +204,16 @@ DEFAULTS = {
     'display': {
         'waveform_max_points': 100000,  # Downsample waveform if longer
         'axis_width': 70,  # Width of Y-axis labels
+    },
+
+    # -------------------------------------------------------------------------
+    # Font settings
+    # -------------------------------------------------------------------------
+    'fonts': {
+        # Monospace font for info labels, tooltips, etc.
+        # Use null for system default, or specify a font name like "Menlo", "Consolas", "DejaVu Sans Mono"
+        'monospace': None,
+        'monospace_size': 8,
     },
 }
 

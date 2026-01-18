@@ -37,7 +37,7 @@ Signals:
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor, QTransform, QFont
+from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase
 
 from ..analysis.acoustic import AcousticFeatures
 from ..config import config
@@ -149,7 +149,14 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             anchor=(0, 0),
             fill=pg.mkBrush(255, 255, 255, 200)
         )
-        self._info_label.setFont(QFont("Monospace", 8))
+        font_name = config['fonts']['monospace']
+        font_size = config['fonts']['monospace_size']
+        if font_name:
+            font = QFont(font_name, font_size)
+        else:
+            font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+            font.setPointSize(font_size)
+        self._info_label.setFont(font)
         self._info_label.hide()
         self._plot.addItem(self._info_label)
 

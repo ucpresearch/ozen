@@ -1,4 +1,4 @@
-"""Tests for annotation tier module."""
+"""Tests for annotation tier module. """
 
 import sys
 import os

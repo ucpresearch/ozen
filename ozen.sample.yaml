@@ -1,7 +1,7 @@
 colors:
   waveform_background: [255, 255, 255, 255]
   waveform_line: [0, 0, 0, 255]
-  waveform_line_width: 2
+  waveform_line_width: 1  # width > 1 causes audio noise on macOS
   cursor: [200, 0, 0, 255]
   cursor_width: 2
   selection_fill: [180, 180, 255, 100]

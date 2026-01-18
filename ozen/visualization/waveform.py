@@ -33,11 +33,11 @@ from ..audio.loader import AudioData
 from ..config import config
 
 
-class WaveformWidget(pg.PlotWidget):
+class WaveformWidget(pg.GraphicsLayoutWidget):
     """
     Widget for displaying audio waveform.
 
-    This widget inherits from pyqtgraph's PlotWidget and provides:
+    This widget inherits from pyqtgraph's GraphicsLayoutWidget and provides:
     - Waveform display with automatic downsampling for long files
     - Praat-like appearance (white background, black waveform)
     - Custom mouse handling for selection and cursor
@@ -80,31 +80,34 @@ class WaveformWidget(pg.PlotWidget):
         # Background color from config
         bg = colors['waveform_background']
         self.setBackground(QColor(*bg))
-        self.showGrid(x=True, y=True, alpha=0.2)
-        self.setLabel('left', 'Amplitude')
-        self.setLabel('bottom', 'Time', units='s')
+
+        # Create the plot inside the layout
+        self._plot = self.addPlot(row=0, col=0)
+        self._plot.showGrid(x=True, y=True, alpha=0.2)
+        self._plot.setLabel('left', 'Amplitude')
+        self._plot.setLabel('bottom', 'Time', units='s')
 
         # Set fixed axis widths for alignment with spectrogram
-        self.plotItem.getAxis('left').setWidth(display['axis_width'])
+        self._plot.getAxis('left').setWidth(display['axis_width'])
         # Add a right axis placeholder to match spectrogram's pitch axis
-        self.plotItem.showAxis('right')
-        self.plotItem.getAxis('right').setWidth(display['axis_width'])
-        self.plotItem.getAxis('right').setStyle(showValues=False)
-        self.plotItem.getAxis('right').setTicks([])
+        self._plot.showAxis('right')
+        self._plot.getAxis('right').setWidth(display['axis_width'])
+        self._plot.getAxis('right').setStyle(showValues=False)
+        self._plot.getAxis('right').setTicks([])
 
         # Disable default mouse drag (we handle selection ourselves)
-        self.setMouseEnabled(x=False, y=False)
-        self.plotItem.vb.setDefaultPadding(0)
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.vb.setDefaultPadding(0)
         # Hide the autorange "A" button
-        self.plotItem.hideButtons()
+        self._plot.hideButtons()
 
         # Create the waveform plot item
-        self._waveform_curve = self.plot(
+        self._waveform_curve = self._plot.plot(
             pen=pg.mkPen(color=colors['waveform_line'][:3], width=colors['waveform_line_width'])
         )
 
         # Connect view range changes
-        self.sigXRangeChanged.connect(self._on_x_range_changed)
+        self._plot.sigXRangeChanged.connect(self._on_x_range_changed)
 
     def _setup_cursor(self):
         """Setup the playback cursor line."""
@@ -116,7 +119,7 @@ class WaveformWidget(pg.PlotWidget):
             movable=False
         )
         self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
-        self.addItem(self._cursor_line)
+        self._plot.addItem(self._cursor_line)
 
     def _setup_selection(self):
         """Setup the selection region."""
@@ -129,7 +132,7 @@ class WaveformWidget(pg.PlotWidget):
         )
         self._selection_region.hide()
         self._selection_region.sigRegionChanged.connect(self._on_selection_changed)
-        self.addItem(self._selection_region)
+        self._plot.addItem(self._selection_region)
 
     def set_audio_data(self, audio_data: AudioData):
         """Load audio data for display."""
@@ -149,11 +152,11 @@ class WaveformWidget(pg.PlotWidget):
         self._waveform_curve.setData(display_times, display_samples)
 
         # Set X range starting exactly at 0
-        self.setXRange(0, audio_data.duration, padding=0)
+        self._plot.setXRange(0, audio_data.duration, padding=0)
 
         # Auto-scale Y to fit waveform
         amp_max = np.max(np.abs(mono))
-        self.setYRange(-amp_max * 1.1, amp_max * 1.1, padding=0)
+        self._plot.setYRange(-amp_max * 1.1, amp_max * 1.1, padding=0)
 
     def set_cursor_position(self, time: float):
         """Set the playback cursor position."""
@@ -183,16 +186,20 @@ class WaveformWidget(pg.PlotWidget):
 
     def get_view_range(self) -> tuple[float, float]:
         """Get the current visible time range."""
-        view_range = self.viewRange()
+        view_range = self._plot.viewRange()
         return (view_range[0][0], view_range[0][1])
 
-    def set_x_range(self, start: float, end: float):
-        """Set the visible time range."""
-        self.setXRange(start, end, padding=0)
+    def setXRange(self, min_val: float, max_val: float, padding: float = 0):
+        """Set the visible X range (for compatibility with main_window)."""
+        self._plot.setXRange(min_val, max_val, padding=padding)
+
+    def viewRange(self):
+        """Get the view range (for compatibility with main_window)."""
+        return self._plot.viewRange()
 
     def _on_x_range_changed(self):
         """Handle view range changes."""
-        x_range = self.viewRange()[0]
+        x_range = self._plot.viewRange()[0]
         self.time_range_changed.emit(x_range[0], x_range[1])
 
     def _on_selection_changed(self):
@@ -205,8 +212,9 @@ class WaveformWidget(pg.PlotWidget):
     def mousePressEvent(self, ev):
         """Handle mouse press for selection (Praat-like behavior)."""
         if ev.button() == Qt.MouseButton.LeftButton:
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
-            x = pos.x()
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            view_pos = self._plot.vb.mapSceneToView(scene_pos)
+            x = view_pos.x()
             self._click_start_pos = x
             self._click_inside_selection = False
 
@@ -230,8 +238,9 @@ class WaveformWidget(pg.PlotWidget):
 
     def mouseMoveEvent(self, ev):
         """Handle mouse move for selection and cursor tracking."""
-        pos = self.plotItem.vb.mapSceneToView(ev.position())
-        x = pos.x()
+        scene_pos = self.mapToScene(ev.position().toPoint())
+        view_pos = self._plot.vb.mapSceneToView(scene_pos)
+        x = view_pos.x()
 
         # Update cursor position on hover
         if self._audio_data is not None:
@@ -248,8 +257,9 @@ class WaveformWidget(pg.PlotWidget):
     def mouseReleaseEvent(self, ev):
         """Handle mouse release for selection."""
         if ev.button() == Qt.MouseButton.LeftButton:
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
-            x = pos.x()
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            view_pos = self._plot.vb.mapSceneToView(scene_pos)
+            x = view_pos.x()
 
             # Check if this was a click inside selection (not a drag)
             if self._click_inside_selection and self._click_start_pos is not None:
@@ -316,13 +326,14 @@ class WaveformWidget(pg.PlotWidget):
                 new_max = self._audio_data.duration
                 new_min = max(0, new_min)
 
-            self.setXRange(new_min, new_max, padding=0)
+            self._plot.setXRange(new_min, new_max, padding=0)
 
         # Vertical scroll = zoom only (slower zoom), centered on mouse position
         if delta_y != 0 and delta_x == 0:
             # Get mouse position in view coordinates
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
-            mouse_x = pos.x()
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            view_pos = self._plot.vb.mapSceneToView(scene_pos)
+            mouse_x = view_pos.x()
 
             # Clamp mouse position to valid range
             mouse_x = max(x_min, min(x_max, mouse_x))
@@ -349,6 +360,6 @@ class WaveformWidget(pg.PlotWidget):
                 new_max = self._audio_data.duration
                 new_min = max(0, new_min)
 
-            self.setXRange(new_min, new_max, padding=0)
+            self._plot.setXRange(new_min, new_max, padding=0)
 
         ev.accept()

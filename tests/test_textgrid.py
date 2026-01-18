@@ -1,4 +1,4 @@
-"""Tests for TextGrid and TSV import/export."""
+"""Tests for TextGrid and TSV import/export. """
 
 import tempfile
 import os

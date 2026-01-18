@@ -7,8 +7,8 @@ annotation tiers (similar to Praat's TextGrid editor). It consists of:
     TierItem: A pyqtgraph GraphicsObject that renders a single tier
         as a horizontal band with interval boundaries and labels.
 
-    AnnotationEditorWidget: A pyqtgraph PlotWidget that manages multiple
-        TierItem objects and handles user interaction.
+    AnnotationEditorWidget: A pyqtgraph GraphicsLayoutWidget that manages
+        multiple TierItem objects and handles user interaction.
 
 Features:
     - Visual display of interval tiers with labels and durations
@@ -21,10 +21,10 @@ Features:
     - Synchronized cursor with waveform/spectrogram views
 
 Architecture:
-    The editor inherits from pg.PlotWidget and uses custom GraphicsObjects
-    (TierItem) for rendering. This allows efficient zooming/panning while
-    maintaining crisp text rendering. Mouse events are handled at the
-    widget level and dispatched to appropriate tier items.
+    The editor inherits from pg.GraphicsLayoutWidget and uses custom
+    GraphicsObjects (TierItem) for rendering. This allows efficient
+    zooming/panning while maintaining crisp text rendering. Mouse events
+    are handled at the widget level and dispatched to appropriate tier items.
 """
 
 import numpy as np
@@ -311,7 +311,7 @@ class TierItem(pg.GraphicsObject):
                 self._duration_items.append(duration_item)
 
 
-class AnnotationEditorWidget(pg.PlotWidget):
+class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
     """Widget for displaying and editing annotation tiers."""
 
     # Signals
@@ -333,6 +333,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._plot = None  # Will be created in _setup_plot
 
         self._annotations: AnnotationSet | None = None
         self._duration: float = 0.0
@@ -396,35 +397,38 @@ class AnnotationEditorWidget(pg.PlotWidget):
     def _setup_plot(self):
         """Configure the plot appearance."""
         self.setBackground('w')
-        self.showGrid(x=True, y=False, alpha=0.2)
-        self.setLabel('bottom', 'Time', units='s')
+
+        # Create the plot inside the layout (like SpectrogramWidget)
+        self._plot = self.addPlot(row=0, col=0)
+        self._plot.showGrid(x=True, y=False, alpha=0.2)
+        self._plot.setLabel('bottom', 'Time', units='s')
 
         # Hide Y axis labels (tiers are labeled internally)
-        self.plotItem.getAxis('left').setWidth(70)
-        self.plotItem.getAxis('left').setStyle(showValues=False)
-        self.plotItem.getAxis('left').setTicks([])
-        self.plotItem.setLabel('left', '')  # Clear any left axis label
+        self._plot.getAxis('left').setWidth(70)
+        self._plot.getAxis('left').setStyle(showValues=False)
+        self._plot.getAxis('left').setTicks([])
+        self._plot.setLabel('left', '')  # Clear any left axis label
 
         # Add right axis placeholder for alignment
-        self.plotItem.showAxis('right')
-        self.plotItem.getAxis('right').setWidth(70)
-        self.plotItem.getAxis('right').setStyle(showValues=False)
-        self.plotItem.getAxis('right').setTicks([])
+        self._plot.showAxis('right')
+        self._plot.getAxis('right').setWidth(70)
+        self._plot.getAxis('right').setStyle(showValues=False)
+        self._plot.getAxis('right').setTicks([])
 
         # Disable default mouse handling
-        self.setMouseEnabled(x=False, y=False)
-        self.plotItem.vb.setDefaultPadding(0)
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.vb.setDefaultPadding(0)
 
         # Disable pyqtgraph's menu and keyboard handling so we can handle text input
-        self.plotItem.setMenuEnabled(False)
-        self.plotItem.vb.setMenuEnabled(False)
+        self._plot.setMenuEnabled(False)
+        self._plot.vb.setMenuEnabled(False)
         # Disable ViewBox keyboard shortcuts (like 'a' for autorange)
-        self.plotItem.vb.state['enableMenu'] = False
+        self._plot.vb.state['enableMenu'] = False
         # Hide the autorange "A" button
-        self.plotItem.hideButtons()
+        self._plot.hideButtons()
 
         # Connect view range changes
-        self.sigXRangeChanged.connect(self._on_x_range_changed)
+        self._plot.sigXRangeChanged.connect(self._on_x_range_changed)
 
     def _setup_cursor(self):
         """Setup the playback cursor line."""
@@ -435,7 +439,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
             movable=False
         )
         self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
-        self.addItem(self._cursor_line)
+        self._plot.addItem(self._cursor_line)
 
     def _setup_selection(self):
         """Setup the selection region."""
@@ -447,7 +451,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
         )
         self._selection_region.hide()
         self._selection_region.sigRegionChanged.connect(self._on_selection_changed)
-        self.addItem(self._selection_region)
+        self._plot.addItem(self._selection_region)
 
     def set_annotations(self, annotations: AnnotationSet):
         """Set the annotation set to display."""
@@ -457,7 +461,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self._update_y_range()
         # Set X range if we have a valid duration
         if self._duration > 0:
-            self.setXRange(0, self._duration, padding=0)
+            self._plot.setXRange(0, self._duration, padding=0)
         # Initial refresh to render tier labels
         self.refresh()
 
@@ -466,7 +470,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
         self._duration = duration
         if self._annotations:
             self._annotations.duration = duration
-        self.setXRange(0, duration, padding=0)
+        self._plot.setXRange(0, duration, padding=0)
 
     def _rebuild_tier_items(self):
         """Rebuild the tier display items."""
@@ -474,13 +478,13 @@ class AnnotationEditorWidget(pg.PlotWidget):
         for item in self._tier_items:
             # Remove text items that were added to the plot
             for text_item in item._text_items:
-                self.removeItem(text_item)
+                self._plot.removeItem(text_item)
             for duration_item in item._duration_items:
-                self.removeItem(duration_item)
+                self._plot.removeItem(duration_item)
             if item._name_item is not None:
-                self.removeItem(item._name_item)
+                self._plot.removeItem(item._name_item)
             # Remove the tier item itself
-            self.removeItem(item)
+            self._plot.removeItem(item)
         self._tier_items.clear()
 
         if self._annotations is None:
@@ -492,23 +496,23 @@ class AnnotationEditorWidget(pg.PlotWidget):
             y_pos = (num_tiers - 1 - i) * self.TIER_HEIGHT
             item = TierItem(tier, y_pos, self.TIER_HEIGHT)
             self._tier_items.append(item)
-            self.addItem(item)
+            self._plot.addItem(item)
 
     def _update_y_range(self):
         """Update the Y axis range based on number of tiers."""
         if self._annotations is None or self._annotations.num_tiers == 0:
-            self.setYRange(0, self.TIER_HEIGHT, padding=0)
+            self._plot.setYRange(0, self.TIER_HEIGHT, padding=0)
         else:
             total_height = self._annotations.num_tiers * self.TIER_HEIGHT
-            self.setYRange(0, total_height, padding=0.02)
+            self._plot.setYRange(0, total_height, padding=0.02)
 
     def refresh(self):
         """Refresh the display after data changes."""
-        view_range = self.viewRange()[0]  # Get current X range
+        view_range = self._plot.viewRange()[0]  # Get current X range
         for item in self._tier_items:
             item.prepareGeometryChange()  # Force geometry update
             item.update()
-            item.update_text_items(self, view_range)  # Update text labels
+            item.update_text_items(self._plot, view_range)  # Update text labels
         # Also update the plot widget itself
         self.viewport().update()
 
@@ -538,21 +542,21 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
     def get_view_range(self) -> tuple[float, float]:
         """Get the current visible time range."""
-        view_range = self.viewRange()
+        view_range = self._plot.viewRange()
         return (view_range[0][0], view_range[0][1])
 
     def set_x_range(self, start: float, end: float):
         """Set the visible time range."""
-        self.setXRange(start, end, padding=0)
+        self._plot.setXRange(start, end, padding=0)
 
     def _on_x_range_changed(self):
         """Handle view range changes."""
-        x_range = self.viewRange()[0]
+        x_range = self._plot.viewRange()[0]
         self.time_range_changed.emit(x_range[0], x_range[1])
         # Redraw tier items with new view and update tier names position
         for item in self._tier_items:
             item.update()
-            item.update_text_items(self, x_range)
+            item.update_text_items(self._plot, x_range)
 
     def _on_selection_changed(self):
         """Handle selection region changes."""
@@ -608,7 +612,8 @@ class AnnotationEditorWidget(pg.PlotWidget):
     def mousePressEvent(self, ev):
         """Handle mouse press - single click selects interval or drags boundary."""
         if ev.button() == Qt.MouseButton.LeftButton:
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            pos = self._plot.vb.mapSceneToView(scene_pos)
             x, y = pos.x(), pos.y()
             self._click_start_pos = x
 
@@ -677,7 +682,8 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
     def mouseMoveEvent(self, ev):
         """Handle mouse move - cursor follows mouse over tiers."""
-        pos = self.plotItem.vb.mapSceneToView(ev.position())
+        scene_pos = self.mapToScene(ev.position().toPoint())
+        pos = self._plot.vb.mapSceneToView(scene_pos)
         x, y = pos.x(), pos.y()
 
         if self._dragging_boundary is not None:
@@ -779,7 +785,8 @@ class AnnotationEditorWidget(pg.PlotWidget):
     def mouseDoubleClickEvent(self, ev):
         """Handle double-click to add a boundary."""
         if ev.button() == Qt.MouseButton.LeftButton:
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            pos = self._plot.vb.mapSceneToView(scene_pos)
             x, y = pos.x(), pos.y()
 
             tier_idx = self._get_tier_at_y(y)
@@ -994,12 +1001,13 @@ class AnnotationEditorWidget(pg.PlotWidget):
                 new_max = self._duration
                 new_min = max(0, new_min)
 
-            self.setXRange(new_min, new_max, padding=0)
+            self._plot.setXRange(new_min, new_max, padding=0)
 
         # Vertical scroll = zoom only, centered on mouse position
         if delta_y != 0 and delta_x == 0:
             # Get mouse position in view coordinates
-            pos = self.plotItem.vb.mapSceneToView(ev.position())
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            pos = self._plot.vb.mapSceneToView(scene_pos)
             mouse_x = pos.x()
 
             # Clamp mouse position to valid range
@@ -1026,7 +1034,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
                 new_max = self._duration
                 new_min = max(0, new_min)
 
-            self.setXRange(new_min, new_max, padding=0)
+            self._plot.setXRange(new_min, new_max, padding=0)
 
         ev.accept()
 
@@ -1177,7 +1185,7 @@ class AnnotationEditorWidget(pg.PlotWidget):
 
             # Get the position in widget coordinates
             # Map interval center from view coords to widget coords
-            view = self.plotItem.vb
+            view = self._plot.vb
             center_x = (interval.start + interval.end) / 2
             tier_y = (self._annotations.num_tiers - 1 - self._selected_tier_idx) * self.TIER_HEIGHT + self.TIER_HEIGHT / 2
 

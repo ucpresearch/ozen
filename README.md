@@ -143,6 +143,21 @@ Config files can customize colors, formant presets, default tiers, and more. See
 - numpy, scipy
 - soundfile
 
+## Known Issues
+
+### macOS: Audio noise during playback
+Setting `waveform_line_width` to greater than 1 in the config causes audio static/noise during playback on macOS. This appears to be a bug in Qt/pyqtgraph's rendering interaction with CoreAudio, not an issue with Ozen itself. The default is 1, which works fine. If you customize colors via a config file, keep this value at 1.
+
+## Acknowledgments
+
+Ozen relies heavily on the following projects for acoustic analysis:
+
+**Praat** - The gold standard for phonetic analysis:
+> Boersma, Paul & Weenink, David (2024). Praat: doing phonetics by computer [Computer program]. Retrieved from http://www.praat.org/
+
+**Parselmouth** - Python bindings for Praat:
+> Jadoul, Y., Thompson, B., & de Boer, B. (2018). Introducing Parselmouth: A Python interface to Praat. *Journal of Phonetics*, 71, 1-15. https://doi.org/10.1016/j.wocn.2018.07.001
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
