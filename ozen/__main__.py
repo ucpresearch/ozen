@@ -99,6 +99,12 @@ def main() -> int:
     app.setOrganizationName("Ozen")
 
     window = MainWindow()
+
+    # Set default tier names from CLI (takes priority over config)
+    # This affects all future file opens, not just the initial one
+    if args.tiers:
+        window.set_default_tier_names(args.tiers)
+
     window.show()
 
     # Deferred file loading function - called after event loop starts
@@ -106,22 +112,16 @@ def main() -> int:
         """Load audio and annotation files specified on command line."""
         if args.audio_file:
             # Load the audio file first (this also initializes the spectrogram)
+            # _load_audio_file will use the default tiers set above (or from config)
             window._load_audio_file(args.audio_file)
 
-            # Handle TextGrid file if provided
+            # Handle TextGrid file if provided - this overrides default tiers
             if args.textgrid_file:
                 textgrid_path = Path(args.textgrid_file)
                 if textgrid_path.suffix.lower() in ('.textgrid', '.txt'):
                     # setup_textgrid_from_path handles both existing files
                     # and prompting to create new ones
                     window.setup_textgrid_from_path(args.textgrid_file, args.tiers)
-
-            # If no TextGrid, use command-line tiers or config default_tiers
-            else:
-                # Command-line tiers take priority over config default_tiers
-                tiers = args.tiers or config_module.config['annotation'].get('default_tiers', [])
-                if tiers:
-                    window._create_predefined_tiers(tiers)
 
     if args.audio_file:
         # Defer file loading until after the Qt event loop starts

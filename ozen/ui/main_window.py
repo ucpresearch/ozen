@@ -157,6 +157,10 @@ class MainWindow(QMainWindow):
         self._textgrid_path: str | None = None  # Current TextGrid save path
         self._is_dirty: bool = False  # True if unsaved changes exist
 
+        # Default tier names (from config or CLI --tiers)
+        # Used when opening new files without an explicit TextGrid
+        self._default_tier_names: list[str] = config['annotation'].get('default_tiers', [])
+
         self._setup_ui()
         self._setup_menus()
         self._setup_toolbar()
@@ -633,9 +637,11 @@ class MainWindow(QMainWindow):
             # Display waveform
             self._waveform.set_audio_data(self._audio_data)
 
-            # Initialize annotations with one default tier
+            # Initialize annotations with default tiers (from config/CLI or fallback)
             self._annotations = AnnotationSet(duration=self._audio_data.duration)
-            self._annotations.add_tier("Annotation")
+            tier_names = self._default_tier_names if self._default_tier_names else ["Annotation"]
+            for name in tier_names:
+                self._annotations.add_tier(name)
             self._annotation_editor.set_annotations(self._annotations)
             self._annotation_editor.set_x_range(0, self._audio_data.duration)
 
@@ -964,6 +970,14 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(
             f"Created {len(tier_names)} tier(s): {', '.join(tier_names)}"
         )
+
+    def set_default_tier_names(self, tier_names: list[str]):
+        """Set the default tier names to use when opening new files.
+
+        Args:
+            tier_names: List of tier names. If empty, falls back to ["Annotation"].
+        """
+        self._default_tier_names = tier_names
 
     def _setup_textgrid_path(self, file_path: str):
         """Setup a TextGrid path for saving (may be new or existing file)."""

@@ -323,12 +323,17 @@ def reload_config(config_path: Path | str | None = None):
     """
     Reload configuration from file.
 
+    Updates the global config dict in-place so that all modules
+    holding references to it will see the new values.
+
     Args:
         config_path: Optional explicit path to config file. If provided,
                      this file will be loaded instead of searching default locations.
     """
     global config
-    config = load_config(config_path)
+    new_config = load_config(config_path)
+    config.clear()
+    config.update(new_config)
 
 
 def load_config_from_path(path: Path | str) -> dict:
