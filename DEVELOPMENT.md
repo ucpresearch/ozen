@@ -149,6 +149,10 @@ Check `waveform_line_width` in config equals 1.
 
 PortAudio can cut off the last few milliseconds of audio before the buffer fully plays out. To prevent this, the player pads audio with silence (configurable via `playback.silence_padding`, default 300ms). This ensures the actual audio content plays completely before the stream closes.
 
+### Play Button Visual Inconsistency
+
+The play button triangles in the spectrogram selection and annotation tiers don't match perfectly despite using the same colors and similar drawing code. The annotation editor draws directly via QPainter in mixed coordinates (seconds × pixels), while the spectrogram uses a QGraphicsItem positioned in scene coordinates. Further work needed to unify the rendering approach.
+
 ## Common Patterns
 
 ### pyqtgraph Idioms

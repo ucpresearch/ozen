@@ -140,7 +140,7 @@ class TierItem(pg.GraphicsObject):
                 btn_width = max(0.005, min(0.025, view_width * 0.01))
                 btn_height = self._height * self.PLAY_BUTTON_HEIGHT
                 btn_margin_y = btn_height * 0.2
-                btn_margin_x = btn_width * 0.3
+                btn_margin_x = btn_width * 0.8
                 btn_left = interval.start + btn_margin_x
                 btn_bottom = self._y_pos + btn_margin_y
                 btn_top = btn_bottom + btn_height

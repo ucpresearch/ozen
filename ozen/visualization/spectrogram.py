@@ -38,8 +38,9 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath
+from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF
+from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath, QPolygonF
+from PyQt6.QtWidgets import QGraphicsItem
 
 from ..analysis.acoustic import AcousticFeatures
 from ..config import config
@@ -93,6 +94,49 @@ FORMANT_PRESETS = {
     'female': {'max_formant': 5500, 'num_formants': 5},
     'child': {'max_formant': 8000, 'num_formants': 5},
 }
+
+
+class PlayButtonItem(QGraphicsItem):
+    """Play button triangle drawn in pixel coordinates, matching annotation editor style."""
+
+    # Button size in pixels
+    WIDTH = 12
+    HEIGHT = 14
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hovered = False
+        self._color = QColor(0, 120, 0, 230)
+        self._hover_color = QColor(0, 180, 0, 255)
+        self._border_color = QColor(0, 80, 0, 255)
+        self.setZValue(2000)
+        self.hide()
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0, 0, self.WIDTH, self.HEIGHT)
+
+    def paint(self, painter, option, widget=None):
+        # Draw right-pointing triangle, same style as annotation editor
+        triangle = QPolygonF([
+            QPointF(0, 0),                          # Top left
+            QPointF(0, self.HEIGHT),                # Bottom left
+            QPointF(self.WIDTH, self.HEIGHT / 2),  # Right point
+        ])
+
+        if self._hovered:
+            painter.setBrush(self._hover_color)
+        else:
+            painter.setBrush(self._color)
+        painter.setPen(pg.mkPen(color=self._border_color, width=1))
+        painter.drawPolygon(triangle)
+
+    def set_hovered(self, hovered: bool):
+        if self._hovered != hovered:
+            self._hovered = hovered
+            self.update()
+
+    def contains(self, point: QPointF) -> bool:
+        return self.boundingRect().contains(point)
 
 
 class SpectrogramWidget(pg.GraphicsLayoutWidget):
@@ -221,23 +265,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._plot.addItem(self._selection_region)
 
         # Play button (triangle) - appears on selection, lower left corner
-        # Create custom right-pointing triangle symbol (▶)
-        play_symbol = QPainterPath()
-        play_symbol.moveTo(-0.5, -0.5)  # Top left
-        play_symbol.lineTo(-0.5, 0.5)   # Bottom left
-        play_symbol.lineTo(0.5, 0)      # Right point
-        play_symbol.closeSubpath()
-
-        self._play_button = pg.ScatterPlotItem(
-            size=16,
-            symbol=play_symbol,
-            brush=pg.mkBrush(0, 120, 0, 230),  # Match annotation editor
-            pen=pg.mkPen(0, 80, 0, 255, width=1),
-            hoverable=False
-        )
-        self._play_button.setZValue(2000)  # Above selection
-        self._play_button.hide()
-        self._plot.addItem(self._play_button)
+        # Uses custom QGraphicsItem for pixel-perfect rendering like annotation editor
+        self._play_button = PlayButtonItem()
+        self._plot.scene().addItem(self._play_button)
 
     def _setup_overlays(self):
         """Setup overlay plot items with colors from config."""
@@ -601,33 +631,29 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         if self._selection_start is None or self._selection_end is None:
             self._play_button.hide()
             return
-        # Position at lower left corner of selection (with small margin)
-        x_range = self._plot.viewRange()[0]
+        # Convert selection start to scene coordinates
+        view_box = self._plot.vb
         y_range = self._plot.viewRange()[1]
-        margin_x = (x_range[1] - x_range[0]) * 0.01  # 1% margin
-        margin_y = (y_range[1] - y_range[0]) * 0.05  # 5% margin from bottom
-        x = self._selection_start + margin_x
-        y = y_range[0] + margin_y  # Near bottom of view
-        self._play_button.setData([x], [y])
+        # Position at lower left of selection, with small pixel margin
+        data_point = QPointF(self._selection_start, y_range[0])
+        scene_point = view_box.mapViewToScene(data_point)
+        # Add pixel margins (matching annotation editor style)
+        margin_x = 6  # pixels from left edge of selection
+        margin_y = 4  # pixels from bottom
+        self._play_button.setPos(scene_point.x() + margin_x,
+                                  scene_point.y() - PlayButtonItem.HEIGHT - margin_y)
         self._play_button.show()
 
     def _is_over_play_button(self, x: float, y: float) -> bool:
-        """Check if coordinates are over the play button."""
+        """Check if data coordinates are over the play button."""
         if not self._play_button.isVisible():
             return False
-        if self._selection_start is None or self._selection_end is None:
-            return False
-        # Play button is at lower left of selection
-        x_range = self._plot.viewRange()[0]
-        y_range = self._plot.viewRange()[1]
-        margin_x = (x_range[1] - x_range[0]) * 0.01
-        margin_y = (y_range[1] - y_range[0]) * 0.05
-        btn_x = self._selection_start + margin_x
-        btn_y = y_range[0] + margin_y
-        # Check if within button radius
-        x_tolerance = (x_range[1] - x_range[0]) * 0.02  # 2% of view width
-        y_tolerance = (y_range[1] - y_range[0]) * 0.05  # 5% of view height
-        return abs(x - btn_x) < x_tolerance and abs(y - btn_y) < y_tolerance
+        # Convert data coords to scene coords
+        view_box = self._plot.vb
+        scene_point = view_box.mapViewToScene(QPointF(x, y))
+        # Check if within button bounds
+        btn_rect = self._play_button.sceneBoundingRect()
+        return btn_rect.contains(scene_point)
 
     def get_selection(self) -> tuple[float, float] | None:
         """Get current selection."""
@@ -692,10 +718,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         over_button = self._is_over_play_button(x, y)
         if over_button != self._play_button_hovered:
             self._play_button_hovered = over_button
-            if over_button:
-                self._play_button.setBrush(pg.mkBrush(0, 180, 0, 255))  # Brighter on hover
-            else:
-                self._play_button.setBrush(pg.mkBrush(0, 120, 0, 230))  # Normal
+            self._play_button.set_hovered(over_button)
 
         if self._is_dragging and self._selection_start is not None:
             self._selection_region.setRegion([self._selection_start, x])
