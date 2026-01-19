@@ -223,7 +223,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # Play button (triangle) - appears on selection, lower left corner
         self._play_button = pg.ScatterPlotItem(
             size=20,
-            symbol='t2',  # Right-pointing triangle
+            symbol='arrow_right',  # Right-pointing arrow/triangle
             brush=pg.mkBrush(0, 150, 0, 200),
             pen=pg.mkPen(0, 100, 0, 255),
             hoverable=False
