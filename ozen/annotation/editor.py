@@ -27,6 +27,8 @@ Architecture:
     are handled at the widget level and dispatched to appropriate tier items.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF, QLineF

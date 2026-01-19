@@ -9,6 +9,8 @@ sounddevice library (Python bindings for PortAudio). It supports:
 - Thread-safe playback state management
 """
 
+from __future__ import annotations
+
 from typing import Optional, Callable
 import threading
 import time

@@ -21,6 +21,8 @@ The module also provides spectrogram computation using either:
     - Praat's spectrogram algorithm (optional)
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional

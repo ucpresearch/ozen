@@ -31,6 +31,8 @@ Threading:
     to keep the UI responsive. Progress is reported via Qt signals.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
 import traceback
