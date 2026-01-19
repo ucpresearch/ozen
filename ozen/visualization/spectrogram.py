@@ -118,8 +118,8 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._is_dragging: bool = False
         self._selection_start: float | None = None
         self._selection_end: float | None = None
-        self._click_inside_selection: bool = False
         self._click_start_pos: float | None = None
+        self._play_button_hovered: bool = False
 
         # Track visibility settings
         self._track_visibility = {
@@ -208,7 +208,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._spectrogram_img.setLookupTable(cmap.getLookupTable())
 
     def _setup_selection(self):
-        """Setup selection region."""
+        """Setup selection region and play button."""
         colors = config['colors']
         self._selection_region = pg.LinearRegionItem(
             values=[0, 0],
@@ -219,6 +219,18 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._selection_region.hide()
         self._selection_region.sigRegionChanged.connect(self._on_selection_changed)
         self._plot.addItem(self._selection_region)
+
+        # Play button (triangle) - appears on selection
+        self._play_button = pg.ScatterPlotItem(
+            size=20,
+            symbol='t1',  # Right-pointing triangle
+            brush=pg.mkBrush(0, 150, 0, 200),
+            pen=pg.mkPen(0, 100, 0, 255),
+            hoverable=False
+        )
+        self._play_button.setZValue(2000)  # Above selection
+        self._play_button.hide()
+        self._plot.addItem(self._play_button)
 
     def _setup_overlays(self):
         """Setup overlay plot items with colors from config."""
@@ -568,12 +580,42 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._selection_end = max(start, end)
         self._selection_region.setRegion([self._selection_start, self._selection_end])
         self._selection_region.show()
+        self._update_play_button()
 
     def clear_selection(self):
         """Clear the selection region."""
         self._selection_start = None
         self._selection_end = None
         self._selection_region.hide()
+        self._play_button.hide()
+
+    def _update_play_button(self):
+        """Update play button position to center of selection."""
+        if self._selection_start is None or self._selection_end is None:
+            self._play_button.hide()
+            return
+        # Position at center of selection, middle of frequency range
+        x = (self._selection_start + self._selection_end) / 2
+        y = (self._freq_start + self._freq_end) / 2
+        self._play_button.setData([x], [y])
+        self._play_button.show()
+
+    def _is_over_play_button(self, x: float, y: float) -> bool:
+        """Check if coordinates are over the play button."""
+        if not self._play_button.isVisible():
+            return False
+        if self._selection_start is None or self._selection_end is None:
+            return False
+        # Play button is at center of selection
+        btn_x = (self._selection_start + self._selection_end) / 2
+        btn_y = (self._freq_start + self._freq_end) / 2
+        # Check if within button radius (in view coordinates)
+        # Use a percentage of the view range for hit testing
+        x_range = self._plot.viewRange()[0]
+        y_range = self._plot.viewRange()[1]
+        x_tolerance = (x_range[1] - x_range[0]) * 0.02  # 2% of view width
+        y_tolerance = (y_range[1] - y_range[0]) * 0.05  # 5% of view height
+        return abs(x - btn_x) < x_tolerance and abs(y - btn_y) < y_tolerance
 
     def get_selection(self) -> tuple[float, float] | None:
         """Get current selection."""
@@ -591,24 +633,22 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         region = self._selection_region.getRegion()
         self._selection_start = region[0]
         self._selection_end = region[1]
+        self._update_play_button()
         self.selection_changed.emit(region[0], region[1])
 
     def mousePressEvent(self, ev):
-        """Handle mouse press for selection (Praat-like)."""
+        """Handle mouse press for selection."""
         if ev.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.mapToScene(ev.position().toPoint())
             view_pos = self._plot.vb.mapSceneToView(scene_pos)
-            x = view_pos.x()
+            x, y = view_pos.x(), view_pos.y()
             self._click_start_pos = x
-            self._click_inside_selection = False
 
-            # Check if clicking inside existing selection
-            if self._selection_region.isVisible():
-                region = self._selection_region.getRegion()
-                if region[0] <= x <= region[1]:
-                    self._click_inside_selection = True
-                    super().mousePressEvent(ev)
-                    return
+            # Check if clicking on play button
+            if self._is_over_play_button(x, y):
+                self.selection_clicked.emit()
+                ev.accept()
+                return
 
             # Start new selection
             self._selection_start = x
@@ -635,6 +675,15 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         if self._features is not None:
             self._update_info_label(x, y)
 
+        # Update play button hover state
+        over_button = self._is_over_play_button(x, y)
+        if over_button != self._play_button_hovered:
+            self._play_button_hovered = over_button
+            if over_button:
+                self._play_button.setBrush(pg.mkBrush(0, 200, 0, 255))  # Brighter on hover
+            else:
+                self._play_button.setBrush(pg.mkBrush(0, 150, 0, 200))  # Normal
+
         if self._is_dragging and self._selection_start is not None:
             self._selection_region.setRegion([self._selection_start, x])
             ev.accept()
@@ -647,20 +696,6 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             scene_pos = self.mapToScene(ev.position().toPoint())
             view_pos = self._plot.vb.mapSceneToView(scene_pos)
             x = view_pos.x()
-
-            # Check if this was a click inside selection (not a drag)
-            if self._click_inside_selection and self._click_start_pos is not None:
-                if abs(x - self._click_start_pos) < 0.01:
-                    # It was just a click, not a drag - play the selection
-                    self.selection_clicked.emit()
-                    ev.accept()
-                    self._click_inside_selection = False
-                    self._click_start_pos = None
-                    return
-                self._click_inside_selection = False
-                self._click_start_pos = None
-                super().mouseReleaseEvent(ev)
-                return
 
             if self._is_dragging:
                 self._selection_end = x
@@ -679,6 +714,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                     if self._selection_start > self._selection_end:
                         self._selection_start, self._selection_end = self._selection_end, self._selection_start
                     self._selection_region.setRegion([self._selection_start, self._selection_end])
+                    self._update_play_button()
                     self.selection_changed.emit(self._selection_start, self._selection_end)
                 ev.accept()
             else:

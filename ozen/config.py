@@ -159,7 +159,7 @@ DEFAULTS = {
     # Playback settings
     # -------------------------------------------------------------------------
     'playback': {
-        'silence_padding': 0.5,  # Seconds of silence to append (prevents audio cutoff)
+        'silence_padding': 0.3,  # Seconds of silence to append (prevents audio cutoff)
     },
 
     # -------------------------------------------------------------------------
