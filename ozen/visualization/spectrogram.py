@@ -39,7 +39,7 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase
+from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath
 
 from ..analysis.acoustic import AcousticFeatures
 from ..config import config
@@ -221,9 +221,16 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._plot.addItem(self._selection_region)
 
         # Play button (triangle) - appears on selection, lower left corner
+        # Create custom right-pointing triangle symbol (▶)
+        play_symbol = QPainterPath()
+        play_symbol.moveTo(-0.5, -0.5)  # Top left
+        play_symbol.lineTo(-0.5, 0.5)   # Bottom left
+        play_symbol.lineTo(0.5, 0)      # Right point
+        play_symbol.closeSubpath()
+
         self._play_button = pg.ScatterPlotItem(
             size=20,
-            symbol='arrow_right',  # Right-pointing arrow/triangle
+            symbol=play_symbol,
             brush=pg.mkBrush(0, 150, 0, 200),
             pen=pg.mkPen(0, 100, 0, 255),
             hoverable=False
