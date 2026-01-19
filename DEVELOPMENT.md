@@ -136,26 +136,14 @@ Annotations auto-save every 60 seconds to a `.autosave` file alongside the main 
 
 ### macOS Audio Noise
 
-On macOS, audio playback can produce static/noise when pyqtgraph widgets are animating (e.g., cursor moving during playback). This was traced to two causes:
+On macOS, audio playback can produce static/noise when pyqtgraph widgets are animating (e.g., cursor moving during playback).
 
-**Cause 1: PlotWidget vs GraphicsLayoutWidget**
-
-`pg.PlotWidget` causes audio interference; `pg.GraphicsLayoutWidget` does not. All display widgets must use:
-
-```python
-class MyWidget(pg.GraphicsLayoutWidget):
-    def __init__(self):
-        super().__init__()
-        self._plot = self.addPlot(row=0, col=0)
-```
-
-**Cause 2: Waveform line width**
+**Known cause: Waveform line width**
 
 Setting `waveform_line_width` greater than 1 causes audio noise during cursor animation. The default is 1, which works correctly. The root cause is unclear but appears related to anti-aliasing or event loop contention with CoreAudio.
 
 **If noise returns:**
-1. Verify all display widgets inherit from `pg.GraphicsLayoutWidget`
-2. Check `waveform_line_width` in config equals 1
+Check `waveform_line_width` in config equals 1.
 
 ### Audio Playback Cutoff
 
