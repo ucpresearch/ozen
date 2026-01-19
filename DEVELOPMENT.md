@@ -76,6 +76,16 @@ The MainWindow connects these signals between widgets so changes propagate autom
 
 ## Design Considerations
 
+### Why PyQt6?
+
+Cross-platform portability is a primary design goal. PyQt6 provides:
+- Native look and feel on Windows, macOS, and Linux
+- Single codebase that runs identically across platforms
+- Mature, well-documented framework with long-term support
+- No platform-specific code required for core functionality
+
+Ozen is developed and tested on Linux and macOS, and runs on Windows without modification.
+
 ### Why pyqtgraph?
 
 Ozen needs to display and interact with potentially long audio files with smooth zooming and panning. pyqtgraph provides:
@@ -83,6 +93,7 @@ Ozen needs to display and interact with potentially long audio files with smooth
 - Efficient handling of large datasets
 - Built-in pan/zoom with mouse interaction
 - Easy overlay of multiple plot items
+- Cross-platform compatibility (builds on PyQt6)
 
 ### Why parselmouth?
 
@@ -99,7 +110,15 @@ The config system allows customization without code changes:
 - Analysis parameters
 - Default tier names
 
-Config files are loaded from multiple locations (local, user home, XDG config) and merged with defaults, so users only need to specify values they want to change.
+**Config file locations** (searched in order, first found wins):
+
+| Location | Purpose |
+|----------|---------|
+| `./ozen.yaml` or `./ozen.json` | Project-specific config |
+| `~/.config/ozen/config.yaml` or `.json` | User config (XDG standard) |
+| `~/.ozen.yaml` or `~/.ozen.json` | User config (simple) |
+
+Config files are merged with defaults, so users only need to specify values they want to change. Config can also be loaded at runtime via **File > Load Config...** or specified on the command line with `-c path/to/config.yaml`.
 
 ### Undo System
 
