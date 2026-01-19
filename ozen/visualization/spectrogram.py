@@ -220,10 +220,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._selection_region.sigRegionChanged.connect(self._on_selection_changed)
         self._plot.addItem(self._selection_region)
 
-        # Play button (triangle) - appears on selection
+        # Play button (triangle) - appears on selection, lower left corner
         self._play_button = pg.ScatterPlotItem(
             size=20,
-            symbol='t1',  # Right-pointing triangle
+            symbol='t3',  # Right-pointing triangle
             brush=pg.mkBrush(0, 150, 0, 200),
             pen=pg.mkPen(0, 100, 0, 255),
             hoverable=False
@@ -590,13 +590,17 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._play_button.hide()
 
     def _update_play_button(self):
-        """Update play button position to center of selection."""
+        """Update play button position to lower left of selection."""
         if self._selection_start is None or self._selection_end is None:
             self._play_button.hide()
             return
-        # Position at center of selection, middle of frequency range
-        x = (self._selection_start + self._selection_end) / 2
-        y = (self._freq_start + self._freq_end) / 2
+        # Position at lower left corner of selection (with small margin)
+        x_range = self._plot.viewRange()[0]
+        y_range = self._plot.viewRange()[1]
+        margin_x = (x_range[1] - x_range[0]) * 0.01  # 1% margin
+        margin_y = (y_range[1] - y_range[0]) * 0.05  # 5% margin from bottom
+        x = self._selection_start + margin_x
+        y = y_range[0] + margin_y  # Near bottom of view
         self._play_button.setData([x], [y])
         self._play_button.show()
 
@@ -606,13 +610,14 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             return False
         if self._selection_start is None or self._selection_end is None:
             return False
-        # Play button is at center of selection
-        btn_x = (self._selection_start + self._selection_end) / 2
-        btn_y = (self._freq_start + self._freq_end) / 2
-        # Check if within button radius (in view coordinates)
-        # Use a percentage of the view range for hit testing
+        # Play button is at lower left of selection
         x_range = self._plot.viewRange()[0]
         y_range = self._plot.viewRange()[1]
+        margin_x = (x_range[1] - x_range[0]) * 0.01
+        margin_y = (y_range[1] - y_range[0]) * 0.05
+        btn_x = self._selection_start + margin_x
+        btn_y = y_range[0] + margin_y
+        # Check if within button radius
         x_tolerance = (x_range[1] - x_range[0]) * 0.02  # 2% of view width
         y_tolerance = (y_range[1] - y_range[0]) * 0.05  # 5% of view height
         return abs(x - btn_x) < x_tolerance and abs(y - btn_y) < y_tolerance
@@ -626,6 +631,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
     def _on_x_range_changed(self):
         """Handle view range changes."""
         x_range = self._plot.viewRange()[0]
+        self._update_play_button()  # Reposition play button for new view
         self.time_range_changed.emit(x_range[0], x_range[1])
 
     def _on_selection_changed(self):
