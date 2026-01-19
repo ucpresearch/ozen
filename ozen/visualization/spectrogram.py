@@ -229,10 +229,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         play_symbol.closeSubpath()
 
         self._play_button = pg.ScatterPlotItem(
-            size=20,
+            size=16,
             symbol=play_symbol,
-            brush=pg.mkBrush(0, 150, 0, 200),
-            pen=pg.mkPen(0, 100, 0, 255),
+            brush=pg.mkBrush(0, 120, 0, 230),  # Match annotation editor
+            pen=pg.mkPen(0, 80, 0, 255, width=1),
             hoverable=False
         )
         self._play_button.setZValue(2000)  # Above selection
@@ -693,9 +693,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         if over_button != self._play_button_hovered:
             self._play_button_hovered = over_button
             if over_button:
-                self._play_button.setBrush(pg.mkBrush(0, 200, 0, 255))  # Brighter on hover
+                self._play_button.setBrush(pg.mkBrush(0, 180, 0, 255))  # Brighter on hover
             else:
-                self._play_button.setBrush(pg.mkBrush(0, 150, 0, 200))  # Normal
+                self._play_button.setBrush(pg.mkBrush(0, 120, 0, 230))  # Normal
 
         if self._is_dragging and self._selection_start is not None:
             self._selection_region.setRegion([self._selection_start, x])
