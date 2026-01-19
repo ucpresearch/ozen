@@ -135,7 +135,7 @@ Config files can customize colors, formant presets, default tiers, and more. See
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.9+
 - PyQt6
 - pyqtgraph
 - parselmouth
