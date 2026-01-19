@@ -57,7 +57,7 @@ from ..annotation import (
     AnnotationSet, AnnotationEditorWidget,
     read_textgrid, write_textgrid, read_tsv, write_tsv
 )
-from ..config import config
+from ..config import config, reload_config
 
 
 class FeatureExtractionThread(QThread):
@@ -377,6 +377,12 @@ class MainWindow(QMainWindow):
         export_tsv = QAction("Export T&SV...", self)
         export_tsv.triggered.connect(self._export_tsv)
         file_menu.addAction(export_tsv)
+
+        file_menu.addSeparator()
+
+        load_config_action = QAction("Load &Config...", self)
+        load_config_action.triggered.connect(self._load_config_dialog)
+        file_menu.addAction(load_config_action)
 
         file_menu.addSeparator()
 
@@ -956,6 +962,28 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:
             QMessageBox.critical(self, "Open Error", f"Failed to open TextGrid: {e}")
+
+    def _load_config_dialog(self):
+        """Load a config file via dialog."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Config",
+            "",
+            "Config Files (*.yaml *.yml *.json);;All Files (*)"
+        )
+        if file_path:
+            try:
+                reload_config(file_path)
+                self._status_bar.showMessage(f"Loaded config from {Path(file_path).name}")
+                QMessageBox.information(
+                    self,
+                    "Config Loaded",
+                    f"Configuration loaded from:\n{file_path}\n\n"
+                    "Note: Some settings (like colors) will take effect "
+                    "when you reload the audio file or restart the application."
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Config Error", f"Failed to load config: {e}")
 
     def _create_predefined_tiers(self, tier_names: list[str]):
         """Create annotation tiers with predefined names."""

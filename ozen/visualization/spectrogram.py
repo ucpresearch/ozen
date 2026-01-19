@@ -186,9 +186,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
     def _setup_pitch_axis(self):
         """Setup pitch display (on main plot, scaled to frequency range)."""
-        # Fixed pitch range like Praat (50-800 Hz)
-        self._pitch_min = 50.0
-        self._pitch_max = 800.0
+        # Pitch range from config
+        self._pitch_min = float(config['pitch']['display_floor'])
+        self._pitch_max = float(config['pitch']['display_ceiling'])
 
         # Use the plot's built-in right axis for pitch scale
         self._plot.showAxis('right')
@@ -346,8 +346,12 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
     def _update_pitch_axis_ticks(self):
         """Update the right axis to show pitch values instead of frequency."""
-        # Create tick values at nice pitch intervals
-        pitch_ticks = [50, 100, 150, 200, 300, 400, 500, 600, 800]
+        # Create tick values at nice pitch intervals based on range
+        p_min = self._pitch_min
+        p_max = self._pitch_max
+        # Generate ticks: every 50 Hz up to 200, then every 100 Hz
+        pitch_ticks = [t for t in [50, 100, 150, 200, 250, 300, 350, 400, 500, 600, 800]
+                       if p_min <= t <= p_max]
 
         # Convert pitch values to frequency axis positions
         p_min = self._pitch_min
@@ -377,23 +381,23 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         f = self._features
 
-        # Pitch - scaled to display on spectrogram with fixed range (50-800 Hz like Praat)
+        # Pitch - scaled to display on spectrogram with configurable range
         if self._track_visibility['pitch'] and self._frequencies is not None:
             valid = ~np.isnan(f.f0)
             if np.any(valid):
                 times_valid = f.times[valid]
                 f0_valid = f.f0[valid]
 
-                # Fixed pitch range like Praat
-                p_min = self._pitch_min  # 50 Hz
-                p_max = self._pitch_max  # 800 Hz
+                # Pitch range from config
+                p_min = self._pitch_min
+                p_max = self._pitch_max
 
                 # Use stored frequency range for proper scaling
                 f_start = self._freq_start
                 f_end = self._freq_end
                 freq_range = f_end - f_start
 
-                # Map pitch (50-800 Hz) to frequency axis (f_start - f_end)
+                # Map pitch to frequency axis for display
                 scaled_pitch = (f0_valid - p_min) / (p_max - p_min) * freq_range + f_start
                 # Clip to valid range
                 scaled_pitch = np.clip(scaled_pitch, f_start, f_end)

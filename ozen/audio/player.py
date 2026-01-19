@@ -19,6 +19,7 @@ import numpy as np
 import sounddevice as sd
 
 from .loader import AudioData
+from ..config import config
 
 
 class AudioPlayer:
@@ -127,6 +128,14 @@ class AudioPlayer:
             samples = np.column_stack([samples, samples])
         # Ensure contiguous float32 array
         samples = np.ascontiguousarray(samples, dtype=np.float32)
+
+        # Pad with silence to prevent audio cutoff
+        # (PortAudio can cut off the last few ms before the buffer fully plays out)
+        silence_duration = config['playback']['silence_padding']
+        if silence_duration > 0:
+            silence_frames = int(silence_duration * sr)
+            silence = np.zeros((silence_frames, samples.shape[1]), dtype=np.float32)
+            samples = np.vstack([samples, silence])
 
         def playback_thread():
             try:

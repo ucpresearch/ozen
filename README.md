@@ -17,6 +17,8 @@ A Python-based acoustic analysis and annotation tool inspired by Praat, built fo
 
 ## Installation
 
+### macOS / Linux
+
 ```bash
 # Clone the repository
 git clone https://github.com/ucpresearch/ozen.git
@@ -30,6 +32,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Windows
+
+```powershell
+# Clone the repository
+git clone https://github.com/ucpresearch/ozen.git
+cd ozen
+
+# Create and activate virtual environment
+python -m venv .venv
+.venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+**Note:** On Windows, `sounddevice` includes PortAudio automatically. On macOS/Linux, you may need to install it separately:
+- macOS: `brew install portaudio`
+- Ubuntu/Debian: `sudo apt install portaudio19-dev`
+
 ## Updating
 
 ```bash
@@ -37,6 +58,8 @@ cd ozen
 git pull
 pip install -r requirements.txt  # if dependencies changed
 ```
+
+On Windows, remember to activate the virtual environment first with `.venv\Scripts\activate`.
 
 ## Usage
 

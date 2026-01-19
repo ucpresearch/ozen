@@ -152,7 +152,14 @@ DEFAULTS = {
     # -------------------------------------------------------------------------
     'pitch': {
         'display_floor': 50,    # Minimum displayed pitch (Hz)
-        'display_ceiling': 800, # Maximum displayed pitch (Hz)
+        'display_ceiling': 400, # Maximum displayed pitch (Hz)
+    },
+
+    # -------------------------------------------------------------------------
+    # Playback settings
+    # -------------------------------------------------------------------------
+    'playback': {
+        'silence_padding': 0.5,  # Seconds of silence to append (prevents audio cutoff)
     },
 
     # -------------------------------------------------------------------------
