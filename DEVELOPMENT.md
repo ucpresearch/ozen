@@ -1,0 +1,209 @@
+# Development Guide
+
+This document provides technical information for developers who want to understand, modify, or contribute to Ozen.
+
+## Architecture Overview
+
+Ozen is built on PyQt6 with pyqtgraph for high-performance visualization. The application follows a signal-based architecture where three main display widgets stay synchronized through Qt signals.
+
+### Main Components
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     MainWindow                          │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              WaveformWidget                       │  │
+│  └───────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │            SpectrogramWidget                      │  │
+│  │    (with acoustic overlay tracks)                 │  │
+│  └───────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │          AnnotationEditorWidget                   │  │
+│  │    (multiple TierItems)                           │  │
+│  └───────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              Control Panel                        │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Signal Flow
+
+All three display widgets synchronize via signals:
+- `time_range_changed` - When zoom/pan changes the visible time range
+- `cursor_moved` - When the playback cursor position updates
+- `selection_changed` - When the user selects a time region
+
+The MainWindow connects these signals between widgets so changes propagate automatically.
+
+## File Structure
+
+### Entry Point
+| File | Purpose |
+|------|---------|
+| `ozen/__main__.py` | CLI argument parsing, application entry point |
+
+### Core Application
+| File | Purpose |
+|------|---------|
+| `ozen/ui/main_window.py` | Main window, menus, toolbar, widget coordination, save system |
+| `ozen/config.py` | Configuration loading/merging from YAML/JSON files |
+
+### Audio
+| File | Purpose |
+|------|---------|
+| `ozen/audio/loader.py` | Audio file loading (WAV, FLAC, MP3, OGG via soundfile) |
+| `ozen/audio/player.py` | Audio playback using sounddevice, position tracking |
+
+### Analysis
+| File | Purpose |
+|------|---------|
+| `ozen/analysis/acoustic.py` | Parselmouth wrapper for pitch, formants, intensity, HNR, spectral moments |
+
+### Visualization
+| File | Purpose |
+|------|---------|
+| `ozen/visualization/waveform.py` | Waveform display widget |
+| `ozen/visualization/spectrogram.py` | Spectrogram display with toggleable acoustic overlay tracks |
+
+### Annotation
+| File | Purpose |
+|------|---------|
+| `ozen/annotation/tier.py` | Data models: `Tier`, `Interval`, `AnnotationSet` |
+| `ozen/annotation/editor.py` | Annotation editor widget with `TierItem` components |
+| `ozen/annotation/textgrid.py` | Praat TextGrid import/export |
+
+## Design Considerations
+
+### Why pyqtgraph?
+
+Ozen needs to display and interact with potentially long audio files with smooth zooming and panning. pyqtgraph provides:
+- GPU-accelerated rendering via OpenGL
+- Efficient handling of large datasets
+- Built-in pan/zoom with mouse interaction
+- Easy overlay of multiple plot items
+
+### Why parselmouth?
+
+Parselmouth provides Python bindings to Praat's acoustic analysis algorithms. These are:
+- Battle-tested and trusted by phoneticians
+- Well-documented in academic literature
+- Consistent with the tool most researchers already use
+
+### Configuration System
+
+The config system allows customization without code changes:
+- Colors, line widths, sizes for all UI elements
+- Formant presets for different voice types
+- Analysis parameters
+- Default tier names
+
+Config files are loaded from multiple locations (local, user home, XDG config) and merged with defaults, so users only need to specify values they want to change.
+
+### Undo System
+
+The annotation editor maintains an undo stack (`_undo_stack`) that captures:
+- Boundary additions/deletions
+- Label text changes
+
+Each undo entry stores enough state to reverse the operation. The stack is managed via `_push_undo()` and `undo()` methods in `editor.py`.
+
+### Auto-save
+
+Annotations auto-save every 60 seconds to a `.autosave` file alongside the main TextGrid. This prevents data loss without overwriting the user's intentional saves.
+
+## Known Issues and Workarounds
+
+### macOS Audio Noise
+
+On macOS, audio playback can produce static/noise when pyqtgraph widgets are animating (e.g., cursor moving during playback). This was traced to two causes:
+
+**Cause 1: PlotWidget vs GraphicsLayoutWidget**
+
+`pg.PlotWidget` causes audio interference; `pg.GraphicsLayoutWidget` does not. All display widgets must use:
+
+```python
+class MyWidget(pg.GraphicsLayoutWidget):
+    def __init__(self):
+        super().__init__()
+        self._plot = self.addPlot(row=0, col=0)
+```
+
+**Cause 2: Waveform line width**
+
+Setting `waveform_line_width` greater than 1 causes audio noise during cursor animation. The default is 1, which works correctly. The root cause is unclear but appears related to anti-aliasing or event loop contention with CoreAudio.
+
+**If noise returns:**
+1. Verify all display widgets inherit from `pg.GraphicsLayoutWidget`
+2. Check `waveform_line_width` in config equals 1
+
+### Audio Playback Cutoff
+
+PortAudio can cut off the last few milliseconds of audio before the buffer fully plays out. To prevent this, the player pads audio with silence (configurable via `playback.silence_padding`, default 500ms). This ensures the actual audio content plays completely before the stream closes.
+
+## Common Patterns
+
+### pyqtgraph Idioms
+
+```python
+# Hide the auto-range "A" button
+self._plot.hideButtons()
+
+# Disable default mouse pan/zoom (we handle it ourselves)
+self._plot.setMouseEnabled(x=False, y=False)
+
+# Enable mouse tracking without button press
+self.setMouseTracking(True)
+
+# Ensure an item renders on top of others
+item.setZValue(1000)
+```
+
+### Config Access
+
+Colors and settings are accessed from the global config dict:
+
+```python
+from ..config import config
+
+# Colors are [R, G, B, A] lists
+color = config['colors']['pitch']
+pen = pg.mkPen(color=color[:3], width=config['colors']['pitch_width'])
+
+# Reload config at runtime
+from ..config import reload_config
+reload_config('/path/to/config.yaml')
+```
+
+### Annotation Editor Refresh
+
+After modifying tiers or boundaries programmatically, call `refresh()` to update the display:
+
+```python
+self._annotation_editor.refresh()
+```
+
+## Adding New Features
+
+### Adding an Overlay Track
+
+1. Add color/width settings to `DEFAULTS` in `config.py`
+2. In `spectrogram.py`:
+   - Add a plot item in `_setup_overlays()`
+   - Add visibility tracking in `_track_visibility`
+   - Add checkbox in main_window.py control panel
+   - Update the track in `_update_overlays()`
+3. If the feature needs new analysis, add it to `acoustic.py` and `AcousticFeatures`
+
+### Adding a Config Option
+
+1. Add the default value to `DEFAULTS` in `config.py`
+2. Access it via `config['section']['key']` where needed
+3. Document it in the README if user-facing
+
+## Testing
+
+- Audio playback requires PortAudio system library
+- X11 forwarding (`ssh -X`) does not forward audio; test locally or use PulseAudio forwarding
+- Feature extraction auto-runs for files under 60 seconds (configurable)
