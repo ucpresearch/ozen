@@ -227,7 +227,7 @@ class TierItem(pg.GraphicsObject):
 
         btn_height = self._height * self.PLAY_BUTTON_HEIGHT
         btn_margin_y = btn_height * 0.2
-        btn_margin_x = btn_width * 0.3
+        btn_margin_x = btn_width * 0.8  # Must match paint() method
 
         # Skip if interval too narrow
         if interval.end - interval.start <= btn_width * 2:
@@ -394,7 +394,7 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
             }
         """)
         self._text_editor.hide()
-        self._text_editor.returnPressed.connect(self._on_text_editor_return)
+        self._text_editor.returnPressed.connect(self._on_text_editor_enter)
         self._text_editor.textChanged.connect(self._on_text_editor_changed)
         # Finalize edit when focus is lost (clicking elsewhere)
         self._text_editor.installEventFilter(self)
@@ -1301,10 +1301,20 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
             return False  # Don't block the event
         return super().eventFilter(obj, event)
 
-    def _on_text_editor_return(self):
-        """Handle Enter key in text editor - confirm and close."""
+    def _on_text_editor_enter(self):
+        """Handle Enter key in text editor - confirm, close, and clear selection."""
+        self._on_text_editor_return(clear_selection=True)
+
+    def _on_text_editor_return(self, clear_selection: bool = False):
+        """Handle text editor closing - confirm and close.
+
+        Args:
+            clear_selection: If True, also clear the interval selection.
+                           Default is False to keep selection for play button clicks.
+        """
         self._hide_text_editor()
-        self._clear_interval_selection()
+        if clear_selection:
+            self._clear_interval_selection()
         self.refresh()
         # Prevent the Enter key from also adding a boundary
         self._ignore_next_enter = True
