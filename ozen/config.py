@@ -88,6 +88,12 @@ DEFAULTS = {
         'nasal_murmur': [160, 82, 45, 255],  # Brown/sienna
         'nasal_murmur_width': 3,
 
+        # Data collection points
+        'data_point': [255, 140, 0, 255],  # Orange
+        'data_point_hover': [255, 180, 50, 255],  # Brighter orange
+        'data_point_line_width': 2,
+        'data_point_marker_size': 8,
+
         # Annotation editor
         'tier_background': [240, 240, 240, 255],  # Light gray
         'tier_border': [100, 100, 100, 255],  # Gray

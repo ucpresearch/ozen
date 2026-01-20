@@ -40,10 +40,11 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF
 from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath, QPolygonF
-from PyQt6.QtWidgets import QGraphicsItem
+from PyQt6.QtWidgets import QGraphicsItem, QMenu
 
 from ..analysis.acoustic import AcousticFeatures
 from ..config import config
+from .data_points import DataPoint, DataPointCollection
 
 
 def create_spectrogram_colormap():
@@ -139,6 +140,121 @@ class PlayButtonItem(QGraphicsItem):
         return self.boundingRect().contains(point)
 
 
+class DataPointItem(QGraphicsItem):
+    """Visual representation of a data collection point.
+
+    Displays as a vertical line spanning the frequency range with a
+    circle marker at the clicked frequency position. The color changes
+    when hovered.
+    """
+
+    def __init__(self, data_point: DataPoint, view_box, freq_range: tuple[float, float], parent=None):
+        super().__init__(parent)
+        self._data_point = data_point
+        self._view_box = view_box
+        self._freq_start, self._freq_end = freq_range
+        self._hovered = False
+
+        colors = config['colors']
+        self._color = QColor(*colors['data_point'][:4])
+        self._hover_color = QColor(*colors['data_point_hover'][:4])
+        self._line_width = colors['data_point_line_width']
+        self._marker_size = colors['data_point_marker_size']
+
+        self.setZValue(1500)  # Above spectrogram, below cursor
+        self.setAcceptHoverEvents(True)
+
+    @property
+    def data_point(self) -> DataPoint:
+        return self._data_point
+
+    @property
+    def point_id(self) -> int:
+        return self._data_point.id
+
+    def update_freq_range(self, freq_start: float, freq_end: float):
+        """Update the frequency range for proper positioning."""
+        self._freq_start = freq_start
+        self._freq_end = freq_end
+        self.prepareGeometryChange()
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        # Return a rect in scene coordinates that covers the line and marker
+        # The line spans the full frequency range at a specific time
+        time = self._data_point.time
+        # Add some padding for the marker
+        marker_padding = 0.02  # In time units
+        return QRectF(
+            time - marker_padding,
+            self._freq_start,
+            marker_padding * 2,
+            self._freq_end - self._freq_start
+        )
+
+    def paint(self, painter, option, widget=None):
+        time = self._data_point.time
+        freq = self._data_point.frequency
+
+        color = self._hover_color if self._hovered else self._color
+        pen = pg.mkPen(color=color, width=self._line_width)
+        painter.setPen(pen)
+
+        # Draw vertical line spanning full frequency range
+        painter.drawLine(
+            QPointF(time, self._freq_start),
+            QPointF(time, self._freq_end)
+        )
+
+        # Draw circle marker at the frequency position
+        brush = pg.mkBrush(color)
+        painter.setBrush(brush)
+
+        # Calculate marker size in data coordinates
+        # We need to convert pixel size to data coordinates
+        view_rect = self._view_box.viewRect()
+        if view_rect.width() > 0 and view_rect.height() > 0:
+            # Get view size in pixels
+            view_size = self._view_box.size()
+            if view_size.width() > 0 and view_size.height() > 0:
+                # Convert pixel size to data coordinates
+                x_scale = view_rect.width() / view_size.width()
+                y_scale = view_rect.height() / view_size.height()
+                marker_x_radius = self._marker_size * x_scale / 2
+                marker_y_radius = self._marker_size * y_scale / 2
+            else:
+                marker_x_radius = 0.01
+                marker_y_radius = 50
+        else:
+            marker_x_radius = 0.01
+            marker_y_radius = 50
+
+        painter.drawEllipse(
+            QPointF(time, freq),
+            marker_x_radius,
+            marker_y_radius
+        )
+
+    def set_hovered(self, hovered: bool):
+        if self._hovered != hovered:
+            self._hovered = hovered
+            self.update()
+
+    def set_position(self, time: float, frequency: float):
+        """Update the point's position."""
+        self._data_point.time = time
+        self._data_point.frequency = frequency
+        self.prepareGeometryChange()
+        self.update()
+
+    def contains_point(self, time: float, freq: float, time_tol: float = 0.02, freq_tol: float = 100) -> bool:
+        """Check if a position is close to this data point."""
+        return (
+            abs(time - self._data_point.time) <= time_tol and
+            abs(freq - self._data_point.frequency) <= freq_tol
+        )
+
+
 class SpectrogramWidget(pg.GraphicsLayoutWidget):
     """Widget for displaying spectrogram with acoustic overlays."""
 
@@ -147,6 +263,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
     cursor_moved = pyqtSignal(float)
     selection_changed = pyqtSignal(float, float)
     selection_clicked = pyqtSignal()  # emitted when user clicks inside selection
+
+    # Data point signals
+    point_added = pyqtSignal(object)  # DataPoint
+    point_removed = pyqtSignal(object)  # DataPoint
+    point_moved = pyqtSignal(object)  # DataPoint
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -176,6 +297,16 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             'a1p0': False,  # A1-P0 nasal ratio (requires voicing)
             'nasal_murmur': False,  # Low-freq energy ratio
         }
+
+        # Data collection points
+        self._data_points = DataPointCollection()
+        self._data_point_items: dict[int, DataPointItem] = {}  # point_id -> item
+        self._hovered_point_id: int | None = None
+        self._dragging_point_id: int | None = None
+        self._drag_start_pos: tuple[float, float] | None = None
+
+        # Callback to get annotation intervals at a time position
+        self._annotation_provider: callable | None = None
 
         self._setup_layout()
         self._setup_spectrogram()
@@ -596,6 +727,199 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             cmap = COLORMAPS[name]()
             self._spectrogram_img.setLookupTable(cmap.getLookupTable())
 
+    # -------------------------------------------------------------------------
+    # Data Collection Points
+    # -------------------------------------------------------------------------
+
+    def set_annotation_provider(self, provider: callable):
+        """Set a callback to get annotation intervals at a time position.
+
+        The callback should accept a time (float) and return a dict mapping
+        tier names to interval text at that time.
+
+        Args:
+            provider: Callable[[float], dict[str, str]]
+        """
+        self._annotation_provider = provider
+
+    def get_data_points(self) -> DataPointCollection:
+        """Get the data point collection."""
+        return self._data_points
+
+    def _add_data_point(self, time: float, frequency: float):
+        """Add a data point at the given position."""
+        # Get acoustic values at this time
+        acoustic_values = self._get_acoustic_values_at_time_raw(time)
+
+        # Add the point to the collection (annotations are looked up at export time)
+        point = self._data_points.add_point(
+            time=time,
+            frequency=frequency,
+            acoustic_values=acoustic_values
+        )
+
+        # Create visual item
+        self._create_data_point_item(point)
+
+        # Emit signal
+        self.point_added.emit(point)
+
+    def _remove_data_point(self, point_id: int):
+        """Remove a data point by ID."""
+        point = self._data_points.remove_point(point_id)
+        if point:
+            # Remove visual item
+            if point_id in self._data_point_items:
+                item = self._data_point_items.pop(point_id)
+                self._plot.removeItem(item)
+
+            # Emit signal
+            self.point_removed.emit(point)
+
+    def _create_data_point_item(self, point: DataPoint):
+        """Create a visual item for a data point."""
+        item = DataPointItem(
+            point,
+            self._plot.vb,
+            (self._freq_start, self._freq_end)
+        )
+        self._data_point_items[point.id] = item
+        self._plot.addItem(item)
+
+    def _get_data_point_at_position(self, time: float, freq: float) -> DataPoint | None:
+        """Find a data point near the given position."""
+        # Calculate tolerances based on current view
+        view_range = self._plot.viewRange()
+        time_range = view_range[0][1] - view_range[0][0]
+        freq_range = view_range[1][1] - view_range[1][0]
+
+        # 2% of view range as tolerance
+        time_tol = time_range * 0.02
+        freq_tol = freq_range * 0.05
+
+        return self._data_points.get_point_at_position(time, freq, time_tol, freq_tol)
+
+    def _update_data_point_hover(self, time: float, freq: float):
+        """Update hover state of data points."""
+        point = self._get_data_point_at_position(time, freq)
+        new_hovered_id = point.id if point else None
+
+        if new_hovered_id != self._hovered_point_id:
+            # Update old hovered item
+            if self._hovered_point_id is not None and self._hovered_point_id in self._data_point_items:
+                self._data_point_items[self._hovered_point_id].set_hovered(False)
+
+            # Update new hovered item
+            if new_hovered_id is not None and new_hovered_id in self._data_point_items:
+                self._data_point_items[new_hovered_id].set_hovered(True)
+
+            self._hovered_point_id = new_hovered_id
+
+    def undo_data_point(self) -> bool:
+        """Undo the last data point action.
+
+        Returns:
+            True if an action was undone, False otherwise
+        """
+        # Get the last action before undoing
+        if not self._data_points._undo_stack:
+            return False
+
+        action_type, data = self._data_points._undo_stack[-1]
+
+        result = self._data_points.undo()
+        if result:
+            if action_type == 'add':
+                # Point was removed by undo - remove visual
+                point = data['point']
+                if point.id in self._data_point_items:
+                    item = self._data_point_items.pop(point.id)
+                    self._plot.removeItem(item)
+                self.point_removed.emit(point)
+
+            elif action_type == 'remove':
+                # Point was re-added by undo - create visual
+                point = data['point']
+                self._create_data_point_item(point)
+                self.point_added.emit(point)
+
+            elif action_type == 'move':
+                # Point was moved back - update visual
+                point_id = data['point_id']
+                if point_id in self._data_point_items:
+                    item = self._data_point_items[point_id]
+                    item.set_position(data['old_time'], data['old_frequency'])
+                    point = self._data_points.get_point_by_id(point_id)
+                    if point:
+                        self.point_moved.emit(point)
+
+        return result
+
+    def clear_data_points(self):
+        """Remove all data points."""
+        for item in self._data_point_items.values():
+            self._plot.removeItem(item)
+        self._data_point_items.clear()
+        self._data_points.clear()
+        self._hovered_point_id = None
+        self._dragging_point_id = None
+
+    def _get_acoustic_values_at_time_raw(self, time: float) -> dict:
+        """Get raw acoustic values at a time (numeric only, for export)."""
+        values = {}
+
+        if self._features is None or self._times is None:
+            return values
+
+        f = self._features
+
+        # Find the nearest time index
+        time_idx = np.searchsorted(f.times, time)
+        if time_idx >= len(f.times):
+            time_idx = len(f.times) - 1
+        if time_idx > 0 and abs(f.times[time_idx - 1] - time) < abs(f.times[time_idx] - time):
+            time_idx -= 1
+
+        # Get values if within reasonable range
+        if abs(f.times[time_idx] - time) < 0.05:  # Within 50ms
+            # Pitch
+            if not np.isnan(f.f0[time_idx]):
+                values['Pitch'] = round(f.f0[time_idx], 1)
+
+            # Intensity
+            if not np.isnan(f.intensity[time_idx]):
+                values['Intensity'] = round(f.intensity[time_idx], 1)
+
+            # Formants
+            for key in ['F1', 'F2', 'F3', 'F4']:
+                if key in f.formants and not np.isnan(f.formants[key][time_idx]):
+                    values[key] = round(f.formants[key][time_idx], 0)
+
+            # HNR
+            if not np.isnan(f.hnr[time_idx]):
+                values['HNR'] = round(f.hnr[time_idx], 1)
+
+            # CoG
+            if not np.isnan(f.cog[time_idx]):
+                values['CoG'] = round(f.cog[time_idx], 0)
+
+            # Spectral tilt
+            if not np.isnan(f.spectral_tilt[time_idx]):
+                values['Tilt'] = round(f.spectral_tilt[time_idx], 1)
+
+            # Nasal ratio (A1-P0)
+            try:
+                if not np.isnan(f.nasal_ratio[time_idx]):
+                    values['A1-P0'] = round(f.nasal_ratio[time_idx], 1)
+            except AttributeError:
+                pass
+
+            # Nasal murmur ratio
+            if not np.isnan(f.nasal_murmur_ratio[time_idx]):
+                values['Nasal'] = round(f.nasal_murmur_ratio[time_idx], 3)
+
+        return values
+
     def set_cursor_position(self, time: float):
         """Set playback cursor position."""
         self._cursor_time = time
@@ -676,7 +1000,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self.selection_changed.emit(region[0], region[1])
 
     def mousePressEvent(self, ev):
-        """Handle mouse press for selection."""
+        """Handle mouse press for selection and data point dragging."""
         if ev.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.mapToScene(ev.position().toPoint())
             view_pos = self._plot.vb.mapSceneToView(scene_pos)
@@ -686,6 +1010,14 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             # Check if clicking on play button
             if self._is_over_play_button(x, y):
                 self.selection_clicked.emit()
+                ev.accept()
+                return
+
+            # Check if clicking on a data point for dragging
+            point = self._get_data_point_at_position(x, y)
+            if point:
+                self._dragging_point_id = point.id
+                self._drag_start_pos = (point.time, point.frequency)
                 ev.accept()
                 return
 
@@ -699,7 +1031,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        """Handle mouse move for selection, cursor tracking, and info display."""
+        """Handle mouse move for selection, cursor tracking, data points, and info display."""
         scene_pos = self.mapToScene(ev.position().toPoint())
         view_pos = self._plot.vb.mapSceneToView(scene_pos)
         x, y = view_pos.x(), view_pos.y()
@@ -720,6 +1052,22 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             self._play_button_hovered = over_button
             self._play_button.set_hovered(over_button)
 
+        # Update data point hover state
+        if not self._dragging_point_id:
+            self._update_data_point_hover(x, y)
+
+        # Handle data point dragging
+        if self._dragging_point_id is not None:
+            # Clamp to valid range
+            x = max(0, min(self._duration, x))
+            y = max(self._freq_start, min(self._freq_end, y))
+
+            # Update visual position
+            if self._dragging_point_id in self._data_point_items:
+                self._data_point_items[self._dragging_point_id].set_position(x, y)
+            ev.accept()
+            return
+
         if self._is_dragging and self._selection_start is not None:
             self._selection_region.setRegion([self._selection_start, x])
             ev.accept()
@@ -727,11 +1075,31 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
-        """Handle mouse release for selection."""
+        """Handle mouse release for selection and data point dragging."""
         if ev.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.mapToScene(ev.position().toPoint())
             view_pos = self._plot.vb.mapSceneToView(scene_pos)
-            x = view_pos.x()
+            x, y = view_pos.x(), view_pos.y()
+
+            # Handle data point drag release
+            if self._dragging_point_id is not None:
+                # Clamp to valid range
+                x = max(0, min(self._duration, x))
+                y = max(self._freq_start, min(self._freq_end, y))
+
+                # Move the point in the collection (this adds to undo stack)
+                self._data_points.move_point(self._dragging_point_id, x, y)
+
+                # Update acoustic values at new position (annotations looked up at export)
+                point = self._data_points.get_point_by_id(self._dragging_point_id)
+                if point:
+                    point.acoustic_values = self._get_acoustic_values_at_time_raw(x)
+                    self.point_moved.emit(point)
+
+                self._dragging_point_id = None
+                self._drag_start_pos = None
+                ev.accept()
+                return
 
             if self._is_dragging:
                 self._selection_end = x
@@ -757,6 +1125,41 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                 super().mouseReleaseEvent(ev)
         else:
             super().mouseReleaseEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev):
+        """Handle double-click to add data points."""
+        if ev.button() == Qt.MouseButton.LeftButton:
+            scene_pos = self.mapToScene(ev.position().toPoint())
+            view_pos = self._plot.vb.mapSceneToView(scene_pos)
+            x, y = view_pos.x(), view_pos.y()
+
+            # Check if within valid range
+            if 0 <= x <= self._duration and self._freq_start <= y <= self._freq_end:
+                self._add_data_point(x, y)
+                ev.accept()
+                return
+
+        super().mouseDoubleClickEvent(ev)
+
+    def contextMenuEvent(self, ev):
+        """Handle right-click context menu for data points."""
+        scene_pos = self.mapToScene(ev.pos())
+        view_pos = self._plot.vb.mapSceneToView(scene_pos)
+        x, y = view_pos.x(), view_pos.y()
+
+        # Check if right-clicking on a data point
+        point = self._get_data_point_at_position(x, y)
+        if point:
+            menu = QMenu(self)
+            remove_action = menu.addAction("Remove")
+
+            action = menu.exec(ev.globalPos())
+            if action == remove_action:
+                self._remove_data_point(point.id)
+            ev.accept()
+            return
+
+        super().contextMenuEvent(ev)
 
     def wheelEvent(self, ev):
         """Handle scroll wheel: vertical = zoom, horizontal = pan."""

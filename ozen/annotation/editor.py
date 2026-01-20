@@ -31,9 +31,9 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF, QLineF
+from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF, QLineF, QEvent
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPolygonF
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLineEdit
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QMenu
 
 from .tier import Tier, Interval, AnnotationSet
 
@@ -326,7 +326,8 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
     boundary_added = pyqtSignal(int, float)  # (tier_index, time)
     boundary_removed = pyqtSignal(int, int)  # (tier_index, boundary_index)
     boundary_moved = pyqtSignal(int, int, float)  # (tier_index, boundary_index, new_time)
-    interval_text_changed = pyqtSignal(int, int, str)  # (tier_index, interval_index, text)
+    interval_text_changed = pyqtSignal(int, int, str)  # (tier_index, interval_index, text) - per character
+    text_edit_finished = pyqtSignal(int, int)  # (tier_index, interval_index) - when edit session ends
     interval_selected = pyqtSignal(int, int)  # (tier_index, interval_index)
     interval_play_requested = pyqtSignal(float, float)  # (start, end)
 
@@ -395,6 +396,8 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
         self._text_editor.hide()
         self._text_editor.returnPressed.connect(self._on_text_editor_return)
         self._text_editor.textChanged.connect(self._on_text_editor_changed)
+        # Finalize edit when focus is lost (clicking elsewhere)
+        self._text_editor.installEventFilter(self)
 
     def _setup_plot(self):
         """Configure the plot appearance."""
@@ -826,6 +829,40 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
         else:
             super().mouseDoubleClickEvent(ev)
 
+    def contextMenuEvent(self, ev):
+        """Handle right-click context menu for removing boundaries."""
+        scene_pos = self.mapToScene(ev.pos())
+        pos = self._plot.vb.mapSceneToView(scene_pos)
+        x, y = pos.x(), pos.y()
+
+        tier_idx = self._get_tier_at_y(y)
+        if tier_idx is None or self._annotations is None:
+            super().contextMenuEvent(ev)
+            return
+
+        tier = self._annotations.get_tier(tier_idx)
+
+        # Check if near a boundary
+        boundary_idx = self._find_boundary_near(tier_idx, x)
+        if boundary_idx is not None:
+            boundary_time = tier.boundaries[boundary_idx]
+
+            menu = QMenu(self)
+            remove_action = menu.addAction("Remove")
+
+            action = menu.exec(ev.globalPos())
+            if action == remove_action:
+                self._push_undo('remove_boundary', tier_idx, boundary_time)
+                tier.remove_boundary(boundary_idx)
+                self._clear_interval_selection()
+                self.refresh()
+                self.boundary_removed.emit(tier_idx, boundary_time)
+
+            ev.accept()
+            return
+
+        super().contextMenuEvent(ev)
+
     def _clear_interval_selection(self):
         """Clear the currently selected interval."""
         if self._selected_tier_idx is not None and self._selected_tier_idx < len(self._tier_items):
@@ -855,10 +892,9 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
             super().keyPressEvent(ev)
             return
 
-        # Handle Ctrl+Z for undo (works even when text editor is active)
-        if ev.key() == Qt.Key.Key_Z and ev.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            self.undo()
-            ev.accept()
+        # Ctrl+Z / Cmd+Z: don't handle here, let it propagate to main window
+        if ev.key() == Qt.Key.Key_Z and (ev.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)):
+            ev.ignore()  # Explicitly ignore so it propagates
             return
 
         # If text editor is active, let it handle the event (don't add boundaries etc.)
@@ -1108,10 +1144,21 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
 
     def _push_undo(self, action_type: str, tier_idx: int, data):
         """Push an action to the undo stack."""
+        # When boundaries change, text undo entries become invalid (interval indices shift)
+        if action_type in ('add_boundary', 'remove_boundary'):
+            self._clear_text_undo_for_tier(tier_idx)
+
         self._undo_stack.append((action_type, tier_idx, data))
         # Limit stack size
         if len(self._undo_stack) > self._max_undo:
             self._undo_stack.pop(0)
+
+    def _clear_text_undo_for_tier(self, tier_idx: int):
+        """Remove text undo entries for a tier (called when boundaries change)."""
+        self._undo_stack = [
+            entry for entry in self._undo_stack
+            if not (entry[0] == 'set_text' and entry[1] == tier_idx)
+        ]
 
     def undo(self) -> bool:
         """Undo the last action. Returns True if an action was undone."""
@@ -1215,16 +1262,21 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
     def _hide_text_editor(self):
         """Hide the inline text editor and restore focus to main widget."""
         # Check if text changed and push to undo stack
+        text_changed = False
+        tier_idx = self._text_edit_tier_idx
+        interval_idx = self._text_edit_interval_idx
+
         if (self._text_edit_original is not None and
-            self._text_edit_tier_idx is not None and
-            self._text_edit_interval_idx is not None and
+            tier_idx is not None and
+            interval_idx is not None and
             self._annotations is not None):
             try:
-                tier = self._annotations.get_tier(self._text_edit_tier_idx)
-                current_text = tier.get_interval_text(self._text_edit_interval_idx)
+                tier = self._annotations.get_tier(tier_idx)
+                current_text = tier.get_interval_text(interval_idx)
                 if current_text != self._text_edit_original:
-                    self._push_undo('set_text', self._text_edit_tier_idx,
-                                   (self._text_edit_interval_idx, self._text_edit_original))
+                    self._push_undo('set_text', tier_idx,
+                                   (interval_idx, self._text_edit_original))
+                    text_changed = True
             except (IndexError, ValueError):
                 pass
 
@@ -1235,6 +1287,19 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
 
         self._text_editor.hide()
         self.setFocus()  # Restore keyboard focus to the annotation editor
+
+        # Emit signal after text edit is finalized (for global undo tracking)
+        if text_changed and tier_idx is not None and interval_idx is not None:
+            self.text_edit_finished.emit(tier_idx, interval_idx)
+
+    def eventFilter(self, obj, event):
+        """Handle events for child widgets."""
+        # Handle text editor losing focus - finalize the edit
+        if obj == self._text_editor and event.type() == QEvent.Type.FocusOut:
+            if self._text_editor.isVisible():
+                self._on_text_editor_return()  # Same as pressing Enter
+            return False  # Don't block the event
+        return super().eventFilter(obj, event)
 
     def _on_text_editor_return(self):
         """Handle Enter key in text editor - confirm and close."""

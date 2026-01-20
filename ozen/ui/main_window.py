@@ -40,7 +40,7 @@ import tempfile
 import os
 
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMetaObject, Q_ARG, Qt as QtCore, QEvent
-from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent
+from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent, QShortcut
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QProgressDialog, QStatusBar, QToolBar,
@@ -158,6 +158,13 @@ class MainWindow(QMainWindow):
         # Save state tracking
         self._textgrid_path: str | None = None  # Current TextGrid save path
         self._is_dirty: bool = False  # True if unsaved changes exist
+        self._last_points_dir: str | None = None  # Last directory used for point export/import
+
+        # Global undo stack: list of ('annotation' | 'data_point') entries
+        # Records the order of undoable operations across both systems
+        self._global_undo_stack: list[str] = []
+        self._max_global_undo = 100
+        self._is_undoing = False  # Flag to prevent re-pushing during undo
 
         # Default tier names (from config or CLI --tiers)
         # Used when opening new files without an explicit TextGrid
@@ -184,6 +191,34 @@ class MainWindow(QMainWindow):
 
         # Install event filter to catch key events for text input
         self.installEventFilter(self)
+
+        # Setup global keyboard shortcuts
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        """Setup global keyboard shortcuts that work regardless of focus."""
+        # Install event filter on application to catch Ctrl+Z/Cmd+Z globally
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
+
+    def _global_undo(self):
+        """Handle global undo across all systems."""
+        self._is_undoing = True
+        try:
+            while self._global_undo_stack:
+                source = self._global_undo_stack.pop()
+
+                if source == 'data_point':
+                    if self._spectrogram.undo_data_point():
+                        self._status_bar.showMessage("Undo", 2000)
+                        return
+                elif source == 'annotation':
+                    if self._annotation_editor.undo():
+                        self._status_bar.showMessage("Undo", 2000)
+                        return
+                # If undo failed, continue to try next item in stack
+        finally:
+            self._is_undoing = False
 
     def _setup_ui(self):
         """Setup the main UI layout."""
@@ -380,6 +415,16 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        import_points = QAction("Import &Point Information...", self)
+        import_points.triggered.connect(self._import_points_tsv)
+        file_menu.addAction(import_points)
+
+        export_points = QAction("Export P&oint Information...", self)
+        export_points.triggered.connect(self._export_points_tsv)
+        file_menu.addAction(export_points)
+
+        file_menu.addSeparator()
+
         load_config_action = QAction("Load &Config...", self)
         load_config_action.triggered.connect(self._load_config_dialog)
         file_menu.addAction(load_config_action)
@@ -539,11 +584,19 @@ class MainWindow(QMainWindow):
         # Annotation-specific signals
         self._annotation_editor.interval_play_requested.connect(self._play_interval)
 
-        # Track annotation changes for dirty state
-        self._annotation_editor.boundary_added.connect(self._mark_dirty)
-        self._annotation_editor.boundary_removed.connect(self._mark_dirty)
-        self._annotation_editor.boundary_moved.connect(self._mark_dirty)
+        # Track annotation changes for global undo stack
+        self._annotation_editor.boundary_added.connect(self._on_annotation_changed)
+        self._annotation_editor.boundary_removed.connect(self._on_annotation_changed)
+        self._annotation_editor.boundary_moved.connect(self._on_annotation_changed)
+        self._annotation_editor.text_edit_finished.connect(self._on_annotation_changed)
+
+        # Track text changes for dirty state only (not undo - that's handled by text_edit_finished)
         self._annotation_editor.interval_text_changed.connect(self._mark_dirty)
+
+        # Data point integration
+        self._spectrogram.point_added.connect(self._on_data_point_changed)
+        self._spectrogram.point_removed.connect(self._on_data_point_changed)
+        self._spectrogram.point_moved.connect(self._on_data_point_changed)
 
         # Player callbacks
         # Position updates are handled by _playback_timer polling current_time
@@ -637,6 +690,10 @@ class MainWindow(QMainWindow):
             # Reset state for new file
             self._textgrid_path = None
             self._is_dirty = False
+            self._global_undo_stack.clear()
+
+            # Clear data points from previous file
+            self._spectrogram.clear_data_points()
 
             # Load audio
             self._audio_data = load_audio(file_path)
@@ -1150,6 +1207,107 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export TSV: {e}")
 
+    def _get_annotation_intervals_at_time(self, time: float) -> dict[str, str]:
+        """Get annotation intervals at a specific time.
+
+        This is called by the spectrogram to populate data points with
+        annotation context.
+
+        Args:
+            time: Time position in seconds
+
+        Returns:
+            Dict mapping tier name to interval text at that time
+        """
+        intervals = {}
+        if self._annotations is None:
+            return intervals
+
+        for tier in self._annotations.get_tiers():
+            try:
+                _, interval = tier.get_interval_at_time(time)
+                intervals[tier.name] = interval.text
+            except (ValueError, IndexError):
+                intervals[tier.name] = ""
+
+        return intervals
+
+    def _import_points_tsv(self):
+        """Import data collection points from a TSV file."""
+        # Use last directory or current file's directory
+        start_dir = self._last_points_dir
+        if not start_dir and self._current_file_path:
+            start_dir = str(Path(self._current_file_path).parent)
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Point Information",
+            start_dir or "",
+            "TSV Files (*.tsv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self._last_points_dir = str(Path(file_path).parent)
+                data_points = self._spectrogram.get_data_points()
+                count = data_points.import_tsv(file_path)
+
+                # Create visual items for imported points
+                for point in data_points.points:
+                    if point.id not in self._spectrogram._data_point_items:
+                        self._spectrogram._create_data_point_item(point)
+
+                self._status_bar.showMessage(
+                    f"Imported {count} point(s) from {Path(file_path).name}"
+                )
+                self._mark_dirty()
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import points: {e}")
+
+    def _export_points_tsv(self):
+        """Export data collection points to a TSV file."""
+        data_points = self._spectrogram.get_data_points()
+        if not data_points.points:
+            QMessageBox.warning(self, "Export", "No data points to export.")
+            return
+
+        # Use last directory or current file's directory
+        start_dir = self._last_points_dir
+        if not start_dir and self._current_file_path:
+            start_dir = str(Path(self._current_file_path).parent)
+
+        default_name = ""
+        if self._current_file_path:
+            default_name = Path(self._current_file_path).stem + "_points.tsv"
+            if start_dir:
+                default_name = str(Path(start_dir) / default_name)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Point Information",
+            default_name,
+            "TSV Files (*.tsv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self._last_points_dir = str(Path(file_path).parent)
+
+                # Get tier names for column ordering
+                tier_names = None
+                if self._annotations:
+                    tier_names = [tier.name for tier in self._annotations.get_tiers()]
+
+                # Export with annotation provider for current annotations
+                data_points.export_tsv(
+                    file_path,
+                    tier_names,
+                    annotation_provider=self._get_annotation_intervals_at_time
+                )
+                self._status_bar.showMessage(
+                    f"Exported {len(data_points.points)} point(s) to {Path(file_path).name}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to export points: {e}")
+
     def _add_tier(self):
         """Add a new annotation tier."""
         if self._annotations is None:
@@ -1231,6 +1389,24 @@ class MainWindow(QMainWindow):
             self._is_dirty = True
             self._update_window_title()
 
+    def _on_annotation_changed(self, *args):
+        """Track annotation changes for global undo ordering."""
+        if self._is_undoing:
+            return  # Don't track changes during undo
+        self._global_undo_stack.append('annotation')
+        if len(self._global_undo_stack) > self._max_global_undo:
+            self._global_undo_stack.pop(0)
+        self._mark_dirty()
+
+    def _on_data_point_changed(self, *args):
+        """Track data point changes for global undo ordering."""
+        if self._is_undoing:
+            return  # Don't track changes during undo
+        self._global_undo_stack.append('data_point')
+        if len(self._global_undo_stack) > self._max_global_undo:
+            self._global_undo_stack.pop(0)
+        self._mark_dirty()
+
     def _update_window_title(self):
         """Update window title to show file name and dirty state."""
         title = "Ozen"
@@ -1306,12 +1482,24 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def eventFilter(self, obj, event):
-        """Filter events to catch key presses for text input."""
+        """Filter events to catch key presses globally."""
         if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            modifiers = event.modifiers()
+
+            # Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac) for undo
+            is_undo = (key == Qt.Key.Key_Z and
+                      (modifiers == Qt.KeyboardModifier.ControlModifier or
+                       modifiers == Qt.KeyboardModifier.MetaModifier))
+
+            if is_undo:
+                self._global_undo()
+                return True  # Event handled
+
             # Don't intercept if the text editor is active - let it handle input naturally
             if self._annotation_editor.is_editing_text():
                 # Only handle Escape to close the editor
-                if event.key() == Qt.Key.Key_Escape:
+                if key == Qt.Key.Key_Escape:
                     self._annotation_editor._hide_text_editor()
                     self._annotation_editor.deselect_interval()
                     return True
@@ -1321,8 +1509,6 @@ class MainWindow(QMainWindow):
             # Check if there's a selected interval but editor not shown yet
             selected = self._annotation_editor.get_selected_interval()
             if selected is not None:
-                key = event.key()
-
                 if key == Qt.Key.Key_Escape:
                     self._annotation_editor.deselect_interval()
                     return True
