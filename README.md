@@ -183,4 +183,6 @@ Ozen relies heavily on the following projects for acoustic analysis:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GPL v3 - see [LICENSE](LICENSE) for details.
+
+**Note:** This project is GPL-licensed solely because of its dependency on parselmouth (in `ozen/analysis/acoustic.py`), which provides Python bindings to Praat. If you create a derivative work that replaces the acoustic analysis with a non-GPL library, you may use the MIT license for all other components (see LICENSE for details).
