@@ -122,7 +122,7 @@ def extract_features(
     pitch = call(snd, "To Pitch", 0.01, pitch_floor, pitch_ceiling)  # Autocorrelation method
     intensity = call(snd, "To Intensity", pitch_floor, 0.01)  # RMS energy
     formants = call(snd, "To Formant (burg)", 0.005, 5, max_formant, 0.025, 50)  # Burg's method
-    harmonicity = call(snd, "To Harmonicity (cc)", 0.01, pitch_floor, 0.1, 1.0)  # Cross-correlation HNR
+    harmonicity = call(snd, "To Harmonicity (ac)", 0.01, pitch_floor, 0.1, 4.5)  # Autocorrelation HNR
 
     # Generate time points
     times = np.arange(0, analysis_duration, time_step)
