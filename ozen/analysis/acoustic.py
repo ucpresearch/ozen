@@ -135,22 +135,37 @@ def extract_features(
     times = np.arange(0, analysis_duration, time_step)
     n_frames = len(times)
 
-    # Resample pitch to our time grid using nearest-neighbor (preserves NaN for unvoiced)
+    # Resample pitch to our time grid using log-scale interpolation
+    # (pitch perception is logarithmic - we hear intervals as ratios)
+    # Only interpolate between voiced frames; preserve NaN for unvoiced regions
     f0_vals = np.full(n_frames, np.nan)
     for i, t in enumerate(times):
-        # Find nearest pitch frame
         idx = np.searchsorted(pitch_times, t)
         if idx == 0:
-            nearest_idx = 0
+            # Before first frame - use first value
+            f0_vals[i] = pitch_values[0]
         elif idx >= len(pitch_times):
-            nearest_idx = len(pitch_times) - 1
+            # After last frame - use last value
+            f0_vals[i] = pitch_values[-1]
         else:
-            # Choose closer of the two surrounding frames
-            if t - pitch_times[idx-1] < pitch_times[idx] - t:
-                nearest_idx = idx - 1
-            else:
-                nearest_idx = idx
-        f0_vals[i] = pitch_values[nearest_idx]
+            # Between two frames - interpolate only if both are voiced
+            val_before = pitch_values[idx - 1]
+            val_after = pitch_values[idx]
+            if not np.isnan(val_before) and not np.isnan(val_after):
+                # Log-scale interpolation (linear in log space)
+                t_before = pitch_times[idx - 1]
+                t_after = pitch_times[idx]
+                weight = (t - t_before) / (t_after - t_before)
+                log_before = np.log(val_before)
+                log_after = np.log(val_after)
+                f0_vals[i] = np.exp(log_before + weight * (log_after - log_before))
+            elif not np.isnan(val_before):
+                # Only before is voiced - use it
+                f0_vals[i] = val_before
+            elif not np.isnan(val_after):
+                # Only after is voiced - use it
+                f0_vals[i] = val_after
+            # else: both unvoiced - leave as NaN
 
     intensity_vals = np.full(n_frames, np.nan)
     hnr_vals = np.full(n_frames, np.nan)
