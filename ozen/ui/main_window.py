@@ -94,15 +94,17 @@ class FeatureExtractionThread(QThread):
 
     def run(self):
         try:
-            # Get formant preset from config
+            # Get formant preset from config (for max_formant only)
             presets = config['formant_presets']
             params = presets.get(self.preset, presets['male'])
+            # Use global pitch settings (like Praat) - works for all voice types
+            analysis_cfg = config['analysis']
             features = extract_features(
                 self.file_path,
                 time_step=self.time_step,
                 max_formant=params['max_formant'],
-                pitch_floor=params['pitch_floor'],
-                pitch_ceiling=params['pitch_ceiling'],
+                pitch_floor=analysis_cfg['default_pitch_floor'],
+                pitch_ceiling=analysis_cfg['default_pitch_ceiling'],
                 progress_callback=lambda p: self.progress.emit(p)
             )
             self.finished.emit(features)
@@ -301,7 +303,8 @@ class MainWindow(QMainWindow):
         self._formant_preset_combo = QComboBox()
         self._formant_preset_combo.addItems(['Female', 'Male', 'Child'])
         self._formant_preset_combo.setToolTip(
-            "Female: max 5500 Hz, pitch 100-500 Hz\nMale: max 5000 Hz, pitch 75-300 Hz\nChild: max 8000 Hz, pitch 150-600 Hz"
+            "Formant analysis preset (affects max formant frequency):\n"
+            "Female: max 5500 Hz\nMale: max 5000 Hz\nChild: max 8000 Hz"
         )
         self._formant_preset_combo.currentTextChanged.connect(self._on_formant_preset_changed)
         formant_layout.addWidget(QLabel("Voice:"))

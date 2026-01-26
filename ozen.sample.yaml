@@ -37,18 +37,12 @@ formant_presets:
   female:
     max_formant: 5500
     num_formants: 5
-    pitch_floor: 100
-    pitch_ceiling: 500
   male:
     max_formant: 5000
     num_formants: 5
-    pitch_floor: 75
-    pitch_ceiling: 300
   child:
     max_formant: 8000
     num_formants: 5
-    pitch_floor: 150
-    pitch_ceiling: 600
 formant_filters:
   F1:
     min_freq: 150
@@ -76,7 +70,7 @@ spectrogram:
   max_frequency_options: [5000, 7500, 10000]
 pitch:
   display_floor: 50
-  display_ceiling: 800
+  display_ceiling: 400
 analysis:
   time_step: 0.01
   default_pitch_floor: 75

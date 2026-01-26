@@ -107,26 +107,20 @@ DEFAULTS = {
     },
 
     # -------------------------------------------------------------------------
-    # Formant extraction presets
+    # Formant extraction presets (affects formant analysis only, not pitch)
     # -------------------------------------------------------------------------
     'formant_presets': {
         'female': {
             'max_formant': 5500,  # Maximum formant frequency (Hz)
             'num_formants': 5,    # Number of formants to track
-            'pitch_floor': 100,   # Minimum F0 (Hz)
-            'pitch_ceiling': 500, # Maximum F0 (Hz)
         },
         'male': {
             'max_formant': 5000,
             'num_formants': 5,
-            'pitch_floor': 75,
-            'pitch_ceiling': 300,
         },
         'child': {
             'max_formant': 8000,
             'num_formants': 5,
-            'pitch_floor': 150,
-            'pitch_ceiling': 600,
         },
     },
 

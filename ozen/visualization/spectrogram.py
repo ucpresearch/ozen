@@ -405,8 +405,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         colors = config['colors']
 
         # Pitch track - scaled to frequency range for display
+        # Use connect='finite' to break line at NaN (unvoiced) values
         self._pitch_curve = pg.PlotCurveItem(
             pen=pg.mkPen(color=colors['pitch'][:3], width=colors['pitch_width']),
+            connect='finite',
             name='Pitch'
         )
         self._plot.addItem(self._pitch_curve)
@@ -562,12 +564,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         f = self._features
 
         # Pitch - scaled to display on spectrogram with configurable range
+        # Keep NaN values so connect='finite' breaks the line at unvoiced frames
         if self._track_visibility['pitch'] and self._frequencies is not None:
-            valid = ~np.isnan(f.f0)
-            if np.any(valid):
-                times_valid = f.times[valid]
-                f0_valid = f.f0[valid]
-
+            if len(f.f0) > 0:
                 # Pitch range from config
                 p_min = self._pitch_min
                 p_max = self._pitch_max
@@ -577,12 +576,12 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                 f_end = self._freq_end
                 freq_range = f_end - f_start
 
-                # Map pitch to frequency axis for display
-                scaled_pitch = (f0_valid - p_min) / (p_max - p_min) * freq_range + f_start
-                # Clip to valid range
+                # Map pitch to frequency axis for display (NaN values stay NaN)
+                scaled_pitch = (f.f0 - p_min) / (p_max - p_min) * freq_range + f_start
+                # Clip valid values to range (NaN stays NaN)
                 scaled_pitch = np.clip(scaled_pitch, f_start, f_end)
 
-                self._pitch_curve.setData(times_valid, scaled_pitch)
+                self._pitch_curve.setData(f.times, scaled_pitch)
 
                 # Update right axis tick labels to show pitch values
                 self._update_pitch_axis_ticks()

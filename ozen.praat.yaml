@@ -66,23 +66,17 @@ colors:
   play_button: [0, 128, 0, 200]
   play_button_hover: [0, 200, 0, 255]
 
-# Praat-like formant settings
+# Praat-like formant settings (affects formant analysis only, not pitch)
 formant_presets:
   female:
     max_formant: 5500
     num_formants: 5
-    pitch_floor: 100
-    pitch_ceiling: 500
   male:
     max_formant: 5000
     num_formants: 5
-    pitch_floor: 75
-    pitch_ceiling: 300
   child:
     max_formant: 8000
     num_formants: 5
-    pitch_floor: 150
-    pitch_ceiling: 600
 
 # Standard Praat-like spectrogram settings
 spectrogram:
@@ -95,8 +89,8 @@ spectrogram:
 
 # Praat-like pitch display range
 pitch:
-  display_floor: 75
-  display_ceiling: 500
+  display_floor: 0
+  display_ceiling: 600
 
 # Example: default tiers for phonetic annotation
 annotation:

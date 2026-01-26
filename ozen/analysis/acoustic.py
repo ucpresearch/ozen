@@ -119,17 +119,39 @@ def extract_features(
 
     # Create Praat analysis objects
     # These compute the full analysis once; we then query values at each time point
-    pitch = call(snd, "To Pitch", 0.01, pitch_floor, pitch_ceiling)  # Autocorrelation method
+    pitch_obj = call(snd, "To Pitch", 0.0, pitch_floor, pitch_ceiling)  # Autocorrelation method, auto time step
     intensity = call(snd, "To Intensity", pitch_floor, 0.01)  # RMS energy
     formants = call(snd, "To Formant (burg)", 0.005, 5, max_formant, 0.025, 50)  # Burg's method
     harmonicity = call(snd, "To Harmonicity (ac)", 0.01, pitch_floor, 0.1, 4.5)  # Autocorrelation HNR
 
-    # Generate time points
+    # Extract pitch directly from Pitch object (more reliable than point-by-point queries)
+    # This gives us the exact F0 values that Praat computed
+    pitch_times = pitch_obj.xs()
+    pitch_values = pitch_obj.selected_array['frequency']
+    # Replace 0 values with NaN (0 means unvoiced in Praat's pitch array)
+    pitch_values = np.where(pitch_values == 0, np.nan, pitch_values)
+
+    # Generate time points for other features
     times = np.arange(0, analysis_duration, time_step)
     n_frames = len(times)
 
-    # Initialize arrays
+    # Resample pitch to our time grid using nearest-neighbor (preserves NaN for unvoiced)
     f0_vals = np.full(n_frames, np.nan)
+    for i, t in enumerate(times):
+        # Find nearest pitch frame
+        idx = np.searchsorted(pitch_times, t)
+        if idx == 0:
+            nearest_idx = 0
+        elif idx >= len(pitch_times):
+            nearest_idx = len(pitch_times) - 1
+        else:
+            # Choose closer of the two surrounding frames
+            if t - pitch_times[idx-1] < pitch_times[idx] - t:
+                nearest_idx = idx - 1
+            else:
+                nearest_idx = idx
+        f0_vals[i] = pitch_values[nearest_idx]
+
     intensity_vals = np.full(n_frames, np.nan)
     hnr_vals = np.full(n_frames, np.nan)
     f1_vals = np.full(n_frames, np.nan)
@@ -157,8 +179,7 @@ def extract_features(
             progress_callback(i / n_frames)
 
         # === Basic features from pre-computed Praat objects ===
-        f0_val = call(pitch, "Get value at time", t, "Hertz", "Linear")
-        f0_vals[i] = f0_val if f0_val else np.nan
+        # (pitch is already extracted above using direct array access)
 
         int_val = call(intensity, "Get value at time", t, "Cubic")
         intensity_vals[i] = int_val if int_val else np.nan
@@ -201,9 +222,10 @@ def extract_features(
 
         # A1-P0 nasal ratio: amplitude of first harmonic minus nasal pole amplitude
         # A1 is at F0 frequency, P0 is in the ~250 Hz nasal region
-        if f0_val and not np.isnan(f0_val) and f0_val > 0:
+        f0_at_t = f0_vals[i]
+        if not np.isnan(f0_at_t) and f0_at_t > 0:
             # Get amplitude at F0 (A1 - first harmonic)
-            a1_amp = call(spectrum, "Get band energy", f0_val * 0.9, f0_val * 1.1)
+            a1_amp = call(spectrum, "Get band energy", f0_at_t * 0.9, f0_at_t * 1.1)
             # Get amplitude at nasal pole region (around 250 Hz, typical P0 region)
             p0_amp = call(spectrum, "Get band energy", 200, 300)
             if a1_amp > 0 and p0_amp > 0:
