@@ -49,14 +49,12 @@ _backend_initialized = False
 
 # Display name mapping (internal name -> display name)
 # Backends:
-#   praatfan      - Pure Python (from praatfan-core-clean) - slow but portable
-#   praatfan_rust - Rust implementation (from praatfan-core-clean) - fast
-#   praatfan_gpl  - Rust implementation (formerly praatfan-core) - GPL licensed
+#   praatfan      - Pure Python - slow but portable (MIT)
+#   praatfan_rust - Rust implementation - fast (MIT)
 #   parselmouth   - Original Praat bindings (GPL)
 BACKEND_DISPLAY_NAMES = {
     'praatfan': 'Praatfan (slow)',
     'praatfan_rust': 'Praatfan (fast)',
-    'praatfan_gpl': 'Praatfan (GPL)',
     'parselmouth': 'Praat',
 }
 
@@ -87,22 +85,44 @@ def _ensure_backend():
 
     This function is called before any acoustic analysis to ensure
     the correct backend is selected based on configuration.
+
+    Backend priority for 'auto' mode:
+        1. praatfan_rust (fast, MIT)
+        2. praatfan_gpl (fast, GPL)
+        3. parselmouth (reference implementation, GPL)
+        4. praatfan (slow, MIT fallback)
     """
     global _backend_initialized
     if _backend_initialized:
         return
 
     desired = config['analysis'].get('acoustic_backend', 'auto')
-    if desired != 'auto':
-        # Convert display name to internal name if needed (e.g., 'praat' -> 'parselmouth')
+    available = get_available_backends()
+
+    if desired == 'auto':
+        # Auto-select best available backend (prefer fast Rust implementation)
+        priority_order = ['praatfan_rust', 'parselmouth', 'praatfan']
+        for backend in priority_order:
+            if backend in available:
+                set_backend(backend)
+                print(f"Acoustic backend auto-selected: {get_backend_display_name(backend)}")
+                break
+    else:
+        # Convert display name to internal name if needed (e.g., 'Praat' -> 'parselmouth')
         internal_name = get_backend_internal_name(desired)
-        available = get_available_backends()
         if internal_name in available:
             set_backend(internal_name)
             print(f"Acoustic backend set to: {desired}")
         else:
             print(f"Warning: Requested backend '{desired}' not available. "
                   f"Available: {available}. Using auto-selection.")
+            # Fall back to auto-selection
+            priority_order = ['praatfan_rust', 'parselmouth', 'praatfan']
+            for backend in priority_order:
+                if backend in available:
+                    set_backend(backend)
+                    print(f"Acoustic backend auto-selected: {get_backend_display_name(backend)}")
+                    break
 
     _backend_initialized = True
 
@@ -213,8 +233,16 @@ def extract_features(
         AcousticFeatures with all extracted measurements
     """
     _ensure_backend()
-    snd = PraatfanSound(str(audio_path))
-    total_duration = snd.get_total_duration()
+
+    # Load audio and convert to mono if needed (praatfan backends require mono)
+    samples, sample_rate = sf.read(str(audio_path), dtype='float64')
+    if samples.ndim > 1:
+        # Convert stereo to mono by averaging channels
+        samples = np.mean(samples, axis=1)
+    samples = np.ascontiguousarray(samples)
+
+    total_duration = len(samples) / sample_rate
+    snd = PraatfanSound(samples, sample_rate)
 
     if start_time is None:
         start_time = 0.0
@@ -223,7 +251,7 @@ def extract_features(
 
     # Extract the region of interest
     if start_time > 0 or end_time < total_duration:
-        snd = snd.extract_part(start_time, end_time, "rectangular", 1.0, False)
+        snd = snd.extract_part(start_time, end_time)
         analysis_duration = end_time - start_time
     else:
         analysis_duration = total_duration
@@ -366,18 +394,18 @@ def extract_features(
         )
 
     # A1-P0 nasal ratio: amplitude at F0 vs amplitude at ~250Hz
-    # Need per-frame because band depends on F0 at each time
-    a1p0_vals = np.full(n_frames, np.nan)
-    for i in range(n_frames):
-        f0_at_t = f0_vals[i]
-        if not np.isnan(f0_at_t) and f0_at_t > 0:
-            # Get A1 band energy centered on F0
-            a1_band = snd.get_band_energy_at_times(
-                np.array([times[i]]), f_min=f0_at_t * 0.9, f_max=f0_at_t * 1.1, window_length=window_duration
-            )[0]
-            p0_band = band_200_300[i]
-            if a1_band > 0 and p0_band > 0:
-                a1p0_vals[i] = 10 * np.log10(a1_band) - 10 * np.log10(p0_band)
+    # Use batch method with variable frequency bands (F0-dependent)
+    f_mins = np.where(~np.isnan(f0_vals) & (f0_vals > 0), f0_vals * 0.9, np.nan)
+    f_maxs = np.where(~np.isnan(f0_vals) & (f0_vals > 0), f0_vals * 1.1, np.nan)
+    a1_bands = snd.get_variable_band_energy_at_times(times, f_mins, f_maxs, window_length=window_duration)
+
+    # Compute A1-P0 ratio in dB
+    with np.errstate(divide='ignore', invalid='ignore'):
+        a1p0_vals = np.where(
+            (a1_bands > 0) & (band_200_300 > 0),
+            10 * np.log10(a1_bands) - 10 * np.log10(band_200_300),
+            np.nan
+        )
 
     if progress_callback:
         progress_callback(1.0)
@@ -577,23 +605,13 @@ def _compute_spectrogram_praat(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute spectrogram using Praat's algorithm (Gaussian window)."""
     _ensure_backend()
-    # Load sound with praatfan
-    snd = PraatfanSound(str(audio_path))
 
     # Note: pre-emphasis not yet available in praatfan unified API
     # The spectrogram will be computed without pre-emphasis
     # (scipy version applies pre-emphasis manually and is used by default)
 
-    total_duration = snd.get_total_duration()
-
-    if start_time is None:
-        start_time = 0.0
-    if end_time is None:
-        end_time = total_duration
-
-    # Extract region of interest
-    if start_time > 0 or end_time < total_duration:
-        snd = snd.extract_part(start_time, end_time, "rectangular", 1.0, False)
+    # Load sound with praatfan (supports partial loading via start_time/end_time)
+    snd = PraatfanSound(str(audio_path), start_time=start_time, end_time=end_time)
 
     # Compute spectrogram using praatfan's direct method
     # Use small time_step and frequency_step for high resolution display
@@ -618,8 +636,9 @@ def _compute_spectrogram_praat(
     max_power = np.max(values_db)
     values_db = np.clip(values_db, max_power - dynamic_range, max_power)
 
-    # Shift times to absolute values
-    times = times + start_time
+    # Shift times to absolute values if we loaded a partial segment
+    if start_time is not None and start_time > 0:
+        times = times + start_time
 
     return times, freqs, values_db
 
@@ -634,24 +653,52 @@ def _compute_spectrogram_scipy(
     pre_emphasis: float = 0.97
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute spectrogram using scipy with Gaussian window (Praat-like)."""
-    # Load audio
-    samples, sample_rate = sf.read(str(audio_path), dtype='float64')
-
-    # Convert to mono if stereo
-    if samples.ndim > 1:
-        samples = np.mean(samples, axis=1)
-
-    total_duration = len(samples) / sample_rate
+    # Get file info without loading the entire file
+    info = sf.info(str(audio_path))
+    sample_rate = info.samplerate
+    total_frames = info.frames
+    total_duration = total_frames / sample_rate
 
     if start_time is None:
         start_time = 0.0
     if end_time is None:
         end_time = total_duration
 
-    # Extract region of interest
+    # Ensure minimum duration for spectrogram computation
+    # Need at least 2x window length for meaningful spectrogram
+    min_duration = window_length * 3
+    segment_duration = end_time - start_time
+    if segment_duration < min_duration:
+        # Expand the range symmetrically to meet minimum
+        expand = (min_duration - segment_duration) / 2
+        start_time = max(0, start_time - expand)
+        end_time = min(total_duration, end_time + expand)
+        # If still too short (near file boundaries), expand the other direction
+        if end_time - start_time < min_duration:
+            if start_time == 0:
+                end_time = min(total_duration, min_duration)
+            else:
+                start_time = max(0, end_time - min_duration)
+
+    # Calculate sample range to read (only read the portion we need)
     start_sample = int(start_time * sample_rate)
     end_sample = int(end_time * sample_rate)
-    samples = samples[start_sample:end_sample]
+
+    # Ensure we have enough samples
+    if end_sample - start_sample < int(window_length * sample_rate) * 2:
+        raise ValueError(f"Audio segment too short for spectrogram: {end_time - start_time:.3f}s")
+
+    # Read only the required portion of the audio file
+    samples, _ = sf.read(
+        str(audio_path),
+        dtype='float64',
+        start=start_sample,
+        stop=end_sample
+    )
+
+    # Convert to mono if stereo
+    if samples.ndim > 1:
+        samples = np.mean(samples, axis=1)
 
     # Apply pre-emphasis filter to boost high frequencies (better for speech)
     if pre_emphasis > 0:
@@ -662,10 +709,14 @@ def _compute_spectrogram_scipy(
     nperseg = max(256, nperseg)  # Minimum window size
 
     # Use larger nfft for better frequency resolution
-    nfft = max(1024, 2 ** int(np.ceil(np.log2(nperseg * 4))))
+    nfft = max(1024, 2 ** int(np.ceil(np.log2(nperseg * 2))))
 
-    # High overlap for smooth display (95% like Praat)
-    noverlap = int(nperseg * 0.95)
+    # Calculate overlap to get ~2000 time points for display (enough for most screens)
+    # hop_size = (n_samples) / n_time_points
+    n_samples = len(samples)
+    target_time_points = 2000
+    hop_size = max(1, n_samples // target_time_points)
+    noverlap = max(0, nperseg - hop_size)
 
     # Create Gaussian window (Praat uses Gaussian)
     # std = nperseg/6 gives good frequency smoothing similar to Praat
