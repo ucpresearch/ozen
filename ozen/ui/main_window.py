@@ -40,7 +40,7 @@ import tempfile
 import os
 
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMetaObject, Q_ARG, Qt as QtCore, QEvent
-from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent, QShortcut
+from PyQt6.QtGui import QAction, QKeySequence, QKeyEvent, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QProgressDialog, QStatusBar, QToolBar,
@@ -277,6 +277,7 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """Setup the main UI layout."""
         self.setWindowTitle("Ozen")
+        self._set_window_icon()
         self.setMinimumSize(1200, 800)
 
         # Central widget
@@ -455,6 +456,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._time_label)
 
         return panel
+
+    def _set_window_icon(self):
+        """Set the application window icon."""
+        # Try to find icon in resources directory relative to package
+        import pathlib
+        package_dir = pathlib.Path(__file__).parent.parent.parent
+        icon_paths = [
+            package_dir / "resources" / "ozen-icon.png",
+            package_dir / "resources" / "ozen-icon-256.png",
+        ]
+        for icon_path in icon_paths:
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
+                return
 
     def _setup_menus(self):
         """Setup menu bar."""
