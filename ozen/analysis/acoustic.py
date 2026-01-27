@@ -49,15 +49,15 @@ _backend_initialized = False
 
 # Display name mapping (internal name -> display name)
 # Backends:
-#   praatfan      - Pure Python (from praatfan-core-clean)
-#   praatfan-rust - Rust implementation (from praatfan-core-clean)
-#   praatfan-core - Rust implementation (from praatfan-core-rs)
+#   praatfan      - Pure Python (from praatfan-core-clean) - slow but portable
+#   praatfan_rust - Rust implementation (from praatfan-core-clean) - fast
+#   praatfan_gpl  - Rust implementation (formerly praatfan-core) - GPL licensed
 #   parselmouth   - Original Praat bindings (GPL)
 BACKEND_DISPLAY_NAMES = {
-    'praatfan': 'praatfan',
-    'praatfan-rust': 'praatfan-rust',
-    'praatfan-core': 'praatfan-core',
-    'parselmouth': 'praat',
+    'praatfan': 'Praatfan (slow)',
+    'praatfan_rust': 'Praatfan (fast)',
+    'praatfan_gpl': 'Praatfan (GPL)',
+    'parselmouth': 'Praat',
 }
 
 # Reverse mapping (display name -> internal name)
@@ -75,11 +75,11 @@ def get_backend_internal_name(display_name: str) -> str:
 
 
 def get_available_backends_display() -> list[str]:
-    """Get list of available backends as display names, with 'praat' last."""
+    """Get list of available backends as display names, with 'Praat' last."""
     available = get_available_backends()
     display_names = [get_backend_display_name(b) for b in available]
-    # Sort so 'praat' is always last
-    return sorted(display_names, key=lambda x: (x == 'praat', x))
+    # Sort so 'Praat' is always last
+    return sorted(display_names, key=lambda x: (x == 'Praat', x))
 
 
 def _ensure_backend():

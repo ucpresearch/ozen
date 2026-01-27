@@ -171,7 +171,7 @@ DEFAULTS = {
         'default_pitch_ceiling': 600, # Default maximum F0 (Hz)
         'hnr_silence_threshold': 0.1, # HNR silence threshold
         'auto_extract_max_duration': 60.0,  # Auto-extract for files under this duration (seconds)
-        'acoustic_backend': 'auto',  # Options: 'auto', 'praatfan', 'praatfan-rust', 'praatfan-core', 'praat'
+        'acoustic_backend': 'auto',  # Options: 'auto', 'Praatfan (slow)', 'Praatfan (fast)', 'Praatfan (GPL)', 'Praat'
     },
 
     # -------------------------------------------------------------------------

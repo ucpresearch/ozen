@@ -161,10 +161,23 @@ Config files can customize colors, formant presets, default tiers, and more. See
 - Python 3.9+
 - PyQt6
 - pyqtgraph
-- parselmouth
+- praatfan (acoustic analysis - MIT licensed)
 - sounddevice
 - numpy, scipy
 - soundfile
+
+### Optional Acoustic Backends
+
+Ozen supports multiple acoustic analysis backends. The default (`praatfan`) is pure Python and works everywhere. For better performance or compatibility, install additional backends:
+
+| Backend | Install | License | Notes |
+|---------|---------|---------|-------|
+| Praatfan (slow) | Included | MIT | Pure Python, portable |
+| Praatfan (fast) | `pip install praatfan_rust` | MIT | Rust, ~10x faster |
+| Praatfan (GPL) | `pip install praatfan_gpl` | GPL | Rust, from praatfan-core-rs |
+| Praat | `pip install praat-parselmouth` | GPL | Original Praat bindings |
+
+Switch backends in the UI via the Backend dropdown, or set `analysis.acoustic_backend` in your config file.
 
 ## Known Issues
 
@@ -173,16 +186,19 @@ Setting `waveform_line_width` to greater than 1 in the config causes audio stati
 
 ## Acknowledgments
 
-Ozen relies heavily on the following projects for acoustic analysis:
+Ozen relies on the following projects for acoustic analysis:
+
+**praatfan** - Clean-room reimplementation of Praat's acoustic algorithms:
+> https://github.com/ucpresearch/praatfan-core-clean
 
 **Praat** - The gold standard for phonetic analysis:
 > Boersma, Paul & Weenink, David (2024). Praat: doing phonetics by computer [Computer program]. Retrieved from http://www.praat.org/
 
-**Parselmouth** - Python bindings for Praat:
+**Parselmouth** - Python bindings for Praat (optional backend):
 > Jadoul, Y., Thompson, B., & de Boer, B. (2018). Introducing Parselmouth: A Python interface to Praat. *Journal of Phonetics*, 71, 1-15. https://doi.org/10.1016/j.wocn.2018.07.001
 
 ## License
 
-GPL v3 - see [LICENSE](LICENSE) for details.
+MIT - see [LICENSE](LICENSE) for details.
 
-**Note:** This project is GPL-licensed solely because of its dependency on parselmouth, which provides Python bindings to Praat. This dependency is isolated to a single file (`ozen/analysis/acoustic.py`), not spread throughout the codebase. If you create a derivative work that replaces this one acoustic analysis module with a non-GPL library, you may use the MIT license for all other components (see LICENSE for details).
+**Note:** The default acoustic backend (`praatfan`) is MIT-licensed, making Ozen fully MIT-compatible out of the box. If you install optional GPL backends (`praat-parselmouth` or `praatfan_gpl`), your deployment becomes GPL-licensed when using those backends.

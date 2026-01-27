@@ -319,11 +319,11 @@ class MainWindow(QMainWindow):
         # Backend selector - allows runtime switching of acoustic analysis engine
         # =====================================================================
         # Available backends (varies by installation):
-        #   - praatfan: Pure Python implementation (MIT license, portable but slower)
-        #   - praatfan-rust: Rust implementation from praatfan-core-clean (MIT, fast)
-        #   - praatfan-core: Rust implementation from praatfan-core-rs (GPL, fastest)
-        #   - praat: Original Praat via parselmouth bindings (GPL, reference impl)
-        # The 'praat' option is always listed last since it requires GPL compliance.
+        #   - Praatfan (slow): Pure Python implementation (MIT license, portable)
+        #   - Praatfan (fast): Rust implementation praatfan_rust (MIT, fast)
+        #   - Praatfan (GPL): Rust implementation praatfan_gpl (GPL)
+        #   - Praat: Original Praat via parselmouth bindings (GPL, reference impl)
+        # The 'Praat' option is always listed last since it requires GPL compliance.
         # Switching backends triggers automatic re-extraction of features.
         backend_group = QGroupBox("Backend")
         backend_layout = QHBoxLayout(backend_group)
@@ -332,10 +332,10 @@ class MainWindow(QMainWindow):
         self._backend_combo.setCurrentText(get_current_backend_display())
         self._backend_combo.setToolTip(
             "Acoustic analysis backend:\n"
-            "praatfan: Pure Python (MIT)\n"
-            "praatfan-rust: Rust from praatfan-core-clean (MIT)\n"
-            "praatfan-core: Rust from praatfan-core-rs (GPL)\n"
-            "praat: Original Praat bindings (GPL)"
+            "Praatfan (slow): Pure Python (MIT)\n"
+            "Praatfan (fast): Rust praatfan_rust (MIT)\n"
+            "Praatfan (GPL): Rust praatfan_gpl (GPL)\n"
+            "Praat: Original Praat bindings (GPL)"
         )
         self._backend_combo.currentTextChanged.connect(self._on_backend_changed)
         backend_layout.addWidget(QLabel("Engine:"))
