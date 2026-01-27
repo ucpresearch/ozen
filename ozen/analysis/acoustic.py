@@ -1,9 +1,10 @@
 """
-Acoustic analysis using Parselmouth (Praat) and scipy.
+Acoustic analysis using praatfan (with pluggable backends) and scipy.
 
 This module provides acoustic feature extraction for speech analysis.
-It uses Parselmouth (Python bindings for Praat) for core acoustic
-measurements and scipy for spectrogram computation.
+It uses praatfan for core acoustic measurements, which supports multiple
+backends including pure Python (MIT), Rust-accelerated (MIT), and
+parselmouth (GPL).
 
 Features extracted:
     - Pitch (F0): Fundamental frequency using Praat's autocorrelation method
@@ -19,6 +20,14 @@ Features extracted:
 The module also provides spectrogram computation using either:
     - scipy with Gaussian window (default, high resolution)
     - Praat's spectrogram algorithm (optional)
+
+Backend Selection:
+    The acoustic analysis backend can be configured via the 'analysis.acoustic_backend'
+    config option:
+    - 'auto': Automatically select best available backend
+    - 'praatfan': Pure Python implementation (MIT license)
+    - 'praatfan-rust': Rust-accelerated implementation (MIT license)
+    - 'parselmouth': Original Praat bindings (GPL license)
 """
 
 from __future__ import annotations
@@ -28,12 +37,113 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import parselmouth
-from parselmouth.praat import call
+from praatfan import Sound as PraatfanSound, set_backend, get_backend, get_available_backends
 from scipy import signal
 import soundfile as sf
 
 from ..config import config
+
+
+# Backend initialization flag
+_backend_initialized = False
+
+# Display name mapping (internal name -> display name)
+# Backends:
+#   praatfan      - Pure Python (from praatfan-core-clean)
+#   praatfan-rust - Rust implementation (from praatfan-core-clean)
+#   praatfan-core - Rust implementation (from praatfan-core-rs)
+#   parselmouth   - Original Praat bindings (GPL)
+BACKEND_DISPLAY_NAMES = {
+    'praatfan': 'praatfan',
+    'praatfan-rust': 'praatfan-rust',
+    'praatfan-core': 'praatfan-core',
+    'parselmouth': 'praat',
+}
+
+# Reverse mapping (display name -> internal name)
+BACKEND_INTERNAL_NAMES = {v: k for k, v in BACKEND_DISPLAY_NAMES.items()}
+
+
+def get_backend_display_name(internal_name: str) -> str:
+    """Convert internal backend name to display name."""
+    return BACKEND_DISPLAY_NAMES.get(internal_name, internal_name)
+
+
+def get_backend_internal_name(display_name: str) -> str:
+    """Convert display name to internal backend name."""
+    return BACKEND_INTERNAL_NAMES.get(display_name, display_name)
+
+
+def get_available_backends_display() -> list[str]:
+    """Get list of available backends as display names, with 'praat' last."""
+    available = get_available_backends()
+    display_names = [get_backend_display_name(b) for b in available]
+    # Sort so 'praat' is always last
+    return sorted(display_names, key=lambda x: (x == 'praat', x))
+
+
+def _ensure_backend():
+    """Initialize acoustic analysis backend from config.
+
+    This function is called before any acoustic analysis to ensure
+    the correct backend is selected based on configuration.
+    """
+    global _backend_initialized
+    if _backend_initialized:
+        return
+
+    desired = config['analysis'].get('acoustic_backend', 'auto')
+    if desired != 'auto':
+        # Convert display name to internal name if needed (e.g., 'praat' -> 'parselmouth')
+        internal_name = get_backend_internal_name(desired)
+        available = get_available_backends()
+        if internal_name in available:
+            set_backend(internal_name)
+            print(f"Acoustic backend set to: {desired}")
+        else:
+            print(f"Warning: Requested backend '{desired}' not available. "
+                  f"Available: {available}. Using auto-selection.")
+
+    _backend_initialized = True
+
+
+def get_current_backend() -> str:
+    """Get the currently active acoustic analysis backend (internal name).
+
+    Returns:
+        Internal name of the current backend (e.g., 'praatfan', 'parselmouth')
+    """
+    _ensure_backend()
+    return get_backend()
+
+
+def get_current_backend_display() -> str:
+    """Get the currently active acoustic analysis backend (display name).
+
+    Returns:
+        Display name of the current backend (e.g., 'praatfan', 'praat')
+    """
+    return get_backend_display_name(get_current_backend())
+
+
+def switch_backend(backend: str) -> bool:
+    """Switch to a different acoustic analysis backend.
+
+    Args:
+        backend: Name of the backend (accepts both display and internal names)
+
+    Returns:
+        True if switch was successful, False otherwise
+    """
+    global _backend_initialized
+    # Convert display name to internal name if needed
+    internal_name = get_backend_internal_name(backend)
+    available = get_available_backends()
+    if internal_name in available:
+        set_backend(internal_name)
+        _backend_initialized = True
+        return True
+    return False
 
 
 @dataclass
@@ -102,8 +212,9 @@ def extract_features(
     Returns:
         AcousticFeatures with all extracted measurements
     """
-    snd = parselmouth.Sound(str(audio_path))
-    total_duration = call(snd, "Get total duration")
+    _ensure_backend()
+    snd = PraatfanSound(str(audio_path))
+    total_duration = snd.get_total_duration()
 
     if start_time is None:
         start_time = 0.0
@@ -112,28 +223,50 @@ def extract_features(
 
     # Extract the region of interest
     if start_time > 0 or end_time < total_duration:
-        snd = call(snd, "Extract part", start_time, end_time, "rectangular", 1.0, "no")
+        snd = snd.extract_part(start_time, end_time, "rectangular", 1.0, False)
         analysis_duration = end_time - start_time
     else:
         analysis_duration = total_duration
 
-    # Create Praat analysis objects
+    # Create analysis objects using praatfan's unified API
     # These compute the full analysis once; we then query values at each time point
-    pitch_obj = call(snd, "To Pitch", 0.0, pitch_floor, pitch_ceiling)  # Autocorrelation method, auto time step
-    intensity = call(snd, "To Intensity", pitch_floor, 0.01)  # RMS energy
-    formants = call(snd, "To Formant (burg)", 0.005, 5, max_formant, 0.025, 50)  # Burg's method
-    harmonicity = call(snd, "To Harmonicity (ac)", 0.01, pitch_floor, 0.1, 4.5)  # Autocorrelation HNR
+    pitch_obj = snd.to_pitch_ac(
+        time_step=0.0,  # Auto time step
+        pitch_floor=pitch_floor,
+        pitch_ceiling=pitch_ceiling
+    )
+    intensity = snd.to_intensity(
+        minimum_pitch=pitch_floor,
+        time_step=0.01
+    )
+    formants = snd.to_formant_burg(
+        time_step=0.005,
+        max_number_of_formants=5,
+        maximum_formant=max_formant,
+        window_length=0.025,
+        pre_emphasis_from=50.0
+    )
+    harmonicity = snd.to_harmonicity_ac(
+        time_step=0.01,
+        minimum_pitch=pitch_floor,
+        silence_threshold=0.1,
+        periods_per_window=4.5
+    )
 
-    # Extract pitch directly from Pitch object (more reliable than point-by-point queries)
-    # This gives us the exact F0 values that Praat computed
+    # Extract pitch using praatfan's unified API
+    # Some backends return 0 for unvoiced, others return NaN - normalize to NaN
     pitch_times = pitch_obj.xs()
-    pitch_values = pitch_obj.selected_array['frequency']
-    # Replace 0 values with NaN (0 means unvoiced in Praat's pitch array)
+    pitch_values = pitch_obj.values()
+    # Convert 0 to NaN (0 means unvoiced in Praat's pitch representation)
     pitch_values = np.where(pitch_values == 0, np.nan, pitch_values)
 
     # Generate time points for other features
     times = np.arange(0, analysis_duration, time_step)
     n_frames = len(times)
+
+    # Helper to check if a pitch value is valid (not NaN and > 0)
+    def is_voiced(val):
+        return not np.isnan(val) and val > 0
 
     # Resample pitch to our time grid using log-scale interpolation
     # (pitch perception is logarithmic - we hear intervals as ratios)
@@ -142,16 +275,18 @@ def extract_features(
     for i, t in enumerate(times):
         idx = np.searchsorted(pitch_times, t)
         if idx == 0:
-            # Before first frame - use first value
-            f0_vals[i] = pitch_values[0]
+            # Before first frame - use first value if voiced
+            if is_voiced(pitch_values[0]):
+                f0_vals[i] = pitch_values[0]
         elif idx >= len(pitch_times):
-            # After last frame - use last value
-            f0_vals[i] = pitch_values[-1]
+            # After last frame - use last value if voiced
+            if is_voiced(pitch_values[-1]):
+                f0_vals[i] = pitch_values[-1]
         else:
             # Between two frames - interpolate only if both are voiced
             val_before = pitch_values[idx - 1]
             val_after = pitch_values[idx]
-            if not np.isnan(val_before) and not np.isnan(val_after):
+            if is_voiced(val_before) and is_voiced(val_after):
                 # Log-scale interpolation (linear in log space)
                 t_before = pitch_times[idx - 1]
                 t_after = pitch_times[idx]
@@ -159,96 +294,90 @@ def extract_features(
                 log_before = np.log(val_before)
                 log_after = np.log(val_after)
                 f0_vals[i] = np.exp(log_before + weight * (log_after - log_before))
-            elif not np.isnan(val_before):
+            elif is_voiced(val_before):
                 # Only before is voiced - use it
                 f0_vals[i] = val_before
-            elif not np.isnan(val_after):
+            elif is_voiced(val_after):
                 # Only after is voiced - use it
                 f0_vals[i] = val_after
             # else: both unvoiced - leave as NaN
 
-    intensity_vals = np.full(n_frames, np.nan)
-    hnr_vals = np.full(n_frames, np.nan)
-    f1_vals = np.full(n_frames, np.nan)
-    f2_vals = np.full(n_frames, np.nan)
-    f3_vals = np.full(n_frames, np.nan)
-    f4_vals = np.full(n_frames, np.nan)
-    bw1_vals = np.full(n_frames, np.nan)
-    bw2_vals = np.full(n_frames, np.nan)
-    bw3_vals = np.full(n_frames, np.nan)
-    bw4_vals = np.full(n_frames, np.nan)
-    cog_vals = np.full(n_frames, np.nan)
-    std_vals = np.full(n_frames, np.nan)
-    skew_vals = np.full(n_frames, np.nan)
-    kurt_vals = np.full(n_frames, np.nan)
-    nasal_vals = np.full(n_frames, np.nan)
-    tilt_vals = np.full(n_frames, np.nan)
-    a1p0_vals = np.full(n_frames, np.nan)  # A1-P0 nasal ratio
+    # === Extract batch features using praatfan's direct methods ===
+    # This is much faster than per-frame call() queries
 
-    window_duration = 0.025  # Window size for spectral analysis
+    # Intensity - interpolate to our time grid
+    int_times = intensity.xs()
+    int_values = intensity.values()
+    intensity_vals = np.interp(times, int_times, int_values, left=np.nan, right=np.nan)
 
-    # Main extraction loop: query each feature at each time point
-    # This is slow but provides maximum accuracy
-    for i, t in enumerate(times):
-        if progress_callback and i % 100 == 0:
-            progress_callback(i / n_frames)
+    # HNR - interpolate to our time grid
+    hnr_times = harmonicity.xs()
+    hnr_values = harmonicity.values()
+    # Replace -200 (Praat's "undefined" for HNR) with NaN
+    hnr_values = np.where(hnr_values <= -200, np.nan, hnr_values)
+    hnr_vals = np.interp(times, hnr_times, hnr_values, left=np.nan, right=np.nan)
 
-        # === Basic features from pre-computed Praat objects ===
-        # (pitch is already extracted above using direct array access)
+    # Formants and bandwidths - extract each formant, then interpolate
+    formant_times = formants.xs()
 
-        int_val = call(intensity, "Get value at time", t, "Cubic")
-        intensity_vals[i] = int_val if int_val else np.nan
+    # Interpolate each formant to our time grid (formant_values takes 1-indexed formant number)
+    f1_vals = np.interp(times, formant_times, formants.formant_values(1), left=np.nan, right=np.nan)
+    f2_vals = np.interp(times, formant_times, formants.formant_values(2), left=np.nan, right=np.nan)
+    f3_vals = np.interp(times, formant_times, formants.formant_values(3), left=np.nan, right=np.nan)
+    f4_vals = np.interp(times, formant_times, formants.formant_values(4), left=np.nan, right=np.nan)
 
-        hnr_val = call(harmonicity, "Get value at time", t, "Linear")
-        hnr_vals[i] = hnr_val if hnr_val else np.nan
+    bw1_vals = np.interp(times, formant_times, formants.bandwidth_values(1), left=np.nan, right=np.nan)
+    bw2_vals = np.interp(times, formant_times, formants.bandwidth_values(2), left=np.nan, right=np.nan)
+    bw3_vals = np.interp(times, formant_times, formants.bandwidth_values(3), left=np.nan, right=np.nan)
+    bw4_vals = np.interp(times, formant_times, formants.bandwidth_values(4), left=np.nan, right=np.nan)
 
-        # Formants and bandwidths
-        f1_vals[i] = call(formants, "Get value at time", 1, t, "Hertz", "Linear") or np.nan
-        f2_vals[i] = call(formants, "Get value at time", 2, t, "Hertz", "Linear") or np.nan
-        f3_vals[i] = call(formants, "Get value at time", 3, t, "Hertz", "Linear") or np.nan
-        f4_vals[i] = call(formants, "Get value at time", 4, t, "Hertz", "Linear") or np.nan
-        bw1_vals[i] = call(formants, "Get bandwidth at time", 1, t, "Hertz", "Linear") or np.nan
-        bw2_vals[i] = call(formants, "Get bandwidth at time", 2, t, "Hertz", "Linear") or np.nan
-        bw3_vals[i] = call(formants, "Get bandwidth at time", 3, t, "Hertz", "Linear") or np.nan
-        bw4_vals[i] = call(formants, "Get bandwidth at time", 4, t, "Hertz", "Linear") or np.nan
+    # Replace 0 values with NaN (0 means undefined for formants)
+    f1_vals = np.where(f1_vals == 0, np.nan, f1_vals)
+    f2_vals = np.where(f2_vals == 0, np.nan, f2_vals)
+    f3_vals = np.where(f3_vals == 0, np.nan, f3_vals)
+    f4_vals = np.where(f4_vals == 0, np.nan, f4_vals)
 
-        # Spectral moments (from short-time spectrum)
-        t_start = max(0, t - window_duration / 2)
-        t_end = min(analysis_duration, t + window_duration / 2)
-        segment = call(snd, "Extract part", t_start, t_end, "rectangular", 1.0, "no")
-        spectrum = call(segment, "To Spectrum", "yes")
+    # === Spectral features using batch methods ===
+    window_duration = 0.025
 
-        cog_vals[i] = call(spectrum, "Get centre of gravity", 2) or np.nan
-        std_vals[i] = call(spectrum, "Get standard deviation", 2) or np.nan
-        skew_vals[i] = call(spectrum, "Get skewness", 2) or np.nan
-        kurt_vals[i] = call(spectrum, "Get kurtosis", 2) or np.nan
+    # Spectral moments (CoG, std, skewness, kurtosis) - all at once
+    spectral_moments = snd.get_spectral_moments_at_times(times, window_length=window_duration)
+    cog_vals = spectral_moments['center_of_gravity']
+    std_vals = spectral_moments['standard_deviation']
+    skew_vals = spectral_moments['skewness']
+    kurt_vals = spectral_moments['kurtosis']
 
-        # Nasal-related features
-        low_freq_energy = call(spectrum, "Get band energy", 0, 500)
-        total_energy = call(spectrum, "Get band energy", 0, 5000)
-        nasal_vals[i] = low_freq_energy / total_energy if total_energy > 0 else np.nan
+    # Band energies for nasal ratio and spectral tilt
+    band_0_500 = snd.get_band_energy_at_times(times, f_min=0, f_max=500, window_length=window_duration)
+    band_0_5000 = snd.get_band_energy_at_times(times, f_min=0, f_max=5000, window_length=window_duration)
+    band_2000_4000 = snd.get_band_energy_at_times(times, f_min=2000, f_max=4000, window_length=window_duration)
+    band_200_300 = snd.get_band_energy_at_times(times, f_min=200, f_max=300, window_length=window_duration)
 
-        band_low = call(spectrum, "Get band energy", 0, 500)
-        band_high = call(spectrum, "Get band energy", 2000, 4000)
-        if band_low > 0 and band_high > 0:
-            tilt_vals[i] = 10 * np.log10(band_low) - 10 * np.log10(band_high)
-        else:
-            tilt_vals[i] = np.nan
+    # Nasal murmur ratio: low-freq energy / total energy
+    with np.errstate(divide='ignore', invalid='ignore'):
+        nasal_vals = np.where(band_0_5000 > 0, band_0_500 / band_0_5000, np.nan)
 
-        # A1-P0 nasal ratio: amplitude of first harmonic minus nasal pole amplitude
-        # A1 is at F0 frequency, P0 is in the ~250 Hz nasal region
+    # Spectral tilt: 10*log10(low) - 10*log10(high)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        tilt_vals = np.where(
+            (band_0_500 > 0) & (band_2000_4000 > 0),
+            10 * np.log10(band_0_500) - 10 * np.log10(band_2000_4000),
+            np.nan
+        )
+
+    # A1-P0 nasal ratio: amplitude at F0 vs amplitude at ~250Hz
+    # Need per-frame because band depends on F0 at each time
+    a1p0_vals = np.full(n_frames, np.nan)
+    for i in range(n_frames):
         f0_at_t = f0_vals[i]
         if not np.isnan(f0_at_t) and f0_at_t > 0:
-            # Get amplitude at F0 (A1 - first harmonic)
-            a1_amp = call(spectrum, "Get band energy", f0_at_t * 0.9, f0_at_t * 1.1)
-            # Get amplitude at nasal pole region (around 250 Hz, typical P0 region)
-            p0_amp = call(spectrum, "Get band energy", 200, 300)
-            if a1_amp > 0 and p0_amp > 0:
-                a1p0_vals[i] = 10 * np.log10(a1_amp) - 10 * np.log10(p0_amp)
-            else:
-                a1p0_vals[i] = np.nan
-        else:
-            a1p0_vals[i] = np.nan
+            # Get A1 band energy centered on F0
+            a1_band = snd.get_band_energy_at_times(
+                np.array([times[i]]), f_min=f0_at_t * 0.9, f_max=f0_at_t * 1.1, window_length=window_duration
+            )[0]
+            p0_band = band_200_300[i]
+            if a1_band > 0 and p0_band > 0:
+                a1p0_vals[i] = 10 * np.log10(a1_band) - 10 * np.log10(p0_band)
 
     if progress_callback:
         progress_callback(1.0)
@@ -410,7 +539,7 @@ def compute_spectrogram(
     use_praat: bool = False  # scipy with Gaussian window gives better resolution
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute spectrogram using Praat (via parselmouth) or scipy.
+    Compute spectrogram using Praat (via praatfan) or scipy.
 
     Args:
         audio_path: Path to audio file
@@ -447,14 +576,15 @@ def _compute_spectrogram_praat(
     pre_emphasis: float = 0.97
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute spectrogram using Praat's algorithm (Gaussian window)."""
-    # Load sound with parselmouth
-    snd = parselmouth.Sound(str(audio_path))
+    _ensure_backend()
+    # Load sound with praatfan
+    snd = PraatfanSound(str(audio_path))
 
-    # Apply pre-emphasis if requested
-    if pre_emphasis > 0:
-        snd = call(snd, "Filter (pre-emphasis)", 50.0)
+    # Note: pre-emphasis not yet available in praatfan unified API
+    # The spectrogram will be computed without pre-emphasis
+    # (scipy version applies pre-emphasis manually and is used by default)
 
-    total_duration = call(snd, "Get total duration")
+    total_duration = snd.get_total_duration()
 
     if start_time is None:
         start_time = 0.0
@@ -463,24 +593,23 @@ def _compute_spectrogram_praat(
 
     # Extract region of interest
     if start_time > 0 or end_time < total_duration:
-        snd = call(snd, "Extract part", start_time, end_time, "rectangular", 1.0, "no")
+        snd = snd.extract_part(start_time, end_time, "rectangular", 1.0, False)
 
-    # Compute spectrogram using Praat
-    # Parameters: time_step, max_freq, window_length, freq_step, window_shape
-    # Use small time_step and freq_step for high resolution display
+    # Compute spectrogram using praatfan's direct method
+    # Use small time_step and frequency_step for high resolution display
     time_step = 0.001  # 1ms time step for smooth display
-    freq_step = 5.0    # 5 Hz frequency resolution (gives ~1000 freq bins for 5kHz)
-    spectrogram = call(snd, "To Spectrogram", time_step, max_frequency,
-                       window_length, freq_step, "Gaussian")
+    freq_step = 5.0    # 5 Hz frequency resolution
+    spectrogram = snd.to_spectrogram(
+        window_length=window_length,
+        maximum_frequency=max_frequency,
+        time_step=time_step,
+        frequency_step=freq_step
+    )
 
-    # Extract data
-    values = np.array(spectrogram.values)  # Shape: (n_freqs, n_times)
-    n_freqs, n_times = values.shape
-
-    # Get time and frequency arrays
-    # Use center times for each frame
-    times = np.array([spectrogram.get_time_from_frame_number(i + 1) for i in range(n_times)])
-    freqs = np.linspace(spectrogram.ymin, spectrogram.ymax, n_freqs)
+    # Extract data using praatfan's unified API
+    values = spectrogram.values()  # Shape: (n_freqs, n_times)
+    times = spectrogram.xs()
+    freqs = spectrogram.ys()
 
     # Convert to dB (Praat uses Pa^2/Hz, convert to dB)
     values_db = 10 * np.log10(values + 1e-30)

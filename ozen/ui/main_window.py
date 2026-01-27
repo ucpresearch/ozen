@@ -51,6 +51,9 @@ from PyQt6.QtWidgets import (
 from ..audio.loader import load_audio, AudioData
 from ..audio.player import AudioPlayer
 from ..analysis.acoustic import extract_features, compute_spectrogram, AcousticFeatures
+from ..analysis import (
+    get_available_backends_display, get_current_backend_display, switch_backend
+)
 from ..visualization.waveform import WaveformWidget
 from ..visualization.spectrogram import SpectrogramWidget
 from ..annotation import (
@@ -311,6 +314,24 @@ class MainWindow(QMainWindow):
         formant_layout.addWidget(self._formant_preset_combo)
 
         layout.addWidget(formant_group)
+
+        # Backend settings group
+        backend_group = QGroupBox("Backend")
+        backend_layout = QHBoxLayout(backend_group)
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItems(get_available_backends_display())
+        self._backend_combo.setCurrentText(get_current_backend_display())
+        self._backend_combo.setToolTip(
+            "Acoustic analysis backend:\n"
+            "praatfan: Pure Python (MIT)\n"
+            "praatfan-rust: Rust from praatfan-core-clean (MIT)\n"
+            "praatfan-core: Rust from praatfan-core-rs (GPL)\n"
+            "praat: Original Praat bindings (GPL)"
+        )
+        self._backend_combo.currentTextChanged.connect(self._on_backend_changed)
+        backend_layout.addWidget(QLabel("Engine:"))
+        backend_layout.addWidget(self._backend_combo)
+        layout.addWidget(backend_group)
 
         # Overlay toggles
         overlay_group = QGroupBox("Overlays")
@@ -757,6 +778,26 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(
                 f"Formant preset changed to {preset}. Click 'Extract Features' to apply."
             )
+
+    def _on_backend_changed(self, backend: str):
+        """Handle acoustic analysis backend change."""
+        if switch_backend(backend):
+            self._status_bar.showMessage(f"Switched to {backend} backend")
+            # Re-extract features if already extracted and file is loaded
+            if (self._features is not None and
+                self._audio_data is not None and
+                self._audio_data.duration <= 60.0 and
+                (self._feature_thread is None or not self._feature_thread.isRunning())):
+                self._status_bar.showMessage(
+                    f"Backend changed to {backend}. Re-extracting features..."
+                )
+                self._start_feature_extraction()
+        else:
+            self._status_bar.showMessage(f"Failed to switch to {backend} backend")
+            # Reset combo to current backend
+            self._backend_combo.blockSignals(True)
+            self._backend_combo.setCurrentText(get_current_backend_display())
+            self._backend_combo.blockSignals(False)
 
     def _recompute_spectrogram(self):
         """Recompute spectrogram with current settings."""

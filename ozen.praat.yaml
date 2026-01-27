@@ -1,5 +1,16 @@
-# Praat-style color configuration for Ozen  
-# Copy this file to ozen.yaml in the project directory to use these colors
+# Praat-style configuration for Ozen
+#
+# This config provides Praat-like colors and uses the original Praat
+# acoustic analysis backend (via parselmouth).
+#
+# Note: The praat backend requires praat-parselmouth to be installed:
+#   pip install praat-parselmouth
+#
+# Usage:
+#   python -m ozen -c ozen.praat.yaml [audio.wav]
+
+analysis:
+  acoustic_backend: praat
 
 colors:
   # Waveform - black on white like Praat
@@ -66,7 +77,7 @@ colors:
   play_button: [0, 128, 0, 200]
   play_button_hover: [0, 200, 0, 255]
 
-# Praat-like formant settings (affects formant analysis only, not pitch)
+# Praat-like formant settings
 formant_presets:
   female:
     max_formant: 5500
@@ -89,8 +100,8 @@ spectrogram:
 
 # Praat-like pitch display range
 pitch:
-  display_floor: 0
-  display_ceiling: 600
+  display_floor: 75
+  display_ceiling: 500
 
 # Example: default tiers for phonetic annotation
 annotation:
