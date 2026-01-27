@@ -527,7 +527,18 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._plot.setYRange(f_start, f_end, padding=0)
 
     def _update_pitch_axis_ticks(self):
-        """Update the right axis to show pitch values instead of frequency."""
+        """Update the right axis to show pitch values on a logarithmic scale.
+
+        Pitch perception is logarithmic - equal musical intervals (like octaves)
+        should have equal visual spacing. This function positions tick marks
+        using log scaling so that:
+          - 100 Hz to 200 Hz (one octave) takes the same visual space as
+          - 200 Hz to 400 Hz (another octave)
+
+        Without log scaling, low frequencies (100-150 Hz range common in male
+        speech) would be squeezed into a tiny visual band, making pitch
+        variations hard to see.
+        """
         # Create tick values at nice pitch intervals based on range
         p_min = self._pitch_min
         p_max = self._pitch_max
@@ -536,7 +547,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                        if p_min <= t <= p_max]
 
         # Convert pitch values to frequency axis positions using LOG SCALE
-        # This gives equal visual spacing for equal musical intervals
+        # Formula: position = (log(pitch) - log(min)) / (log(max) - log(min)) * range
         f_start = self._freq_start
         f_end = self._freq_end
         freq_range = f_end - f_start
@@ -565,34 +576,42 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         f = self._features
 
-        # Pitch - scaled to display on spectrogram with configurable range
-        # Uses LOG SCALE for perceptually uniform spacing (pitch is logarithmic)
-        # Keep NaN values so connect='finite' breaks the line at unvoiced frames
+        # =====================================================================
+        # Pitch overlay - displayed on LOG SCALE for perceptual uniformity
+        # =====================================================================
+        # Pitch (fundamental frequency, F0) is displayed with logarithmic scaling
+        # because human pitch perception is logarithmic. This means:
+        #   - An octave (2:1 ratio) always looks the same height on screen
+        #   - Male speech (~100-150 Hz) and female speech (~200-300 Hz) are
+        #     equally visible, rather than male speech being squashed at bottom
+        #
+        # NaN values are preserved so connect='finite' breaks the line at
+        # unvoiced frames (pauses, unvoiced consonants).
         if self._track_visibility['pitch'] and self._frequencies is not None:
             if len(f.f0) > 0:
-                # Pitch range from config
+                # Pitch display range from config (e.g., 50-400 Hz)
                 p_min = self._pitch_min
                 p_max = self._pitch_max
 
-                # Use stored frequency range for proper scaling
+                # Map to the frequency axis range for display
                 f_start = self._freq_start
                 f_end = self._freq_end
                 freq_range = f_end - f_start
 
-                # Map pitch to frequency axis using LOG SCALE (NaN values stay NaN)
-                # This gives equal visual distance for equal musical intervals
+                # Apply log scaling: position = (log(f0) - log(min)) / (log(max) - log(min))
+                # This maps pitch values to screen positions logarithmically
                 log_p_min = np.log(p_min)
                 log_p_max = np.log(p_max)
                 log_range = log_p_max - log_p_min
                 # Suppress warnings for log(NaN) - result is NaN which is what we want
                 with np.errstate(invalid='ignore'):
                     scaled_pitch = (np.log(f.f0) - log_p_min) / log_range * freq_range + f_start
-                # Clip valid values to range (NaN stays NaN)
+                # Clip valid values to display range (NaN stays NaN)
                 scaled_pitch = np.clip(scaled_pitch, f_start, f_end)
 
                 self._pitch_curve.setData(f.times, scaled_pitch)
 
-                # Update right axis tick labels to show pitch values
+                # Update right axis tick labels to match log scale positions
                 self._update_pitch_axis_ticks()
             self._pitch_curve.show()
         else:

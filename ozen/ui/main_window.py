@@ -315,7 +315,16 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(formant_group)
 
-        # Backend settings group
+        # =====================================================================
+        # Backend selector - allows runtime switching of acoustic analysis engine
+        # =====================================================================
+        # Available backends (varies by installation):
+        #   - praatfan: Pure Python implementation (MIT license, portable but slower)
+        #   - praatfan-rust: Rust implementation from praatfan-core-clean (MIT, fast)
+        #   - praatfan-core: Rust implementation from praatfan-core-rs (GPL, fastest)
+        #   - praat: Original Praat via parselmouth bindings (GPL, reference impl)
+        # The 'praat' option is always listed last since it requires GPL compliance.
+        # Switching backends triggers automatic re-extraction of features.
         backend_group = QGroupBox("Backend")
         backend_layout = QHBoxLayout(backend_group)
         self._backend_combo = QComboBox()
@@ -780,10 +789,22 @@ class MainWindow(QMainWindow):
             )
 
     def _on_backend_changed(self, backend: str):
-        """Handle acoustic analysis backend change."""
+        """Handle acoustic analysis backend change.
+
+        Called when user selects a different backend from the dropdown.
+        Switches the praatfan backend and automatically re-extracts features
+        if a file is loaded and short enough for auto-extraction.
+
+        Args:
+            backend: Display name of the selected backend (e.g., 'praatfan', 'praat')
+        """
         if switch_backend(backend):
             self._status_bar.showMessage(f"Switched to {backend} backend")
-            # Re-extract features if already extracted and file is loaded
+            # Re-extract features automatically if:
+            # 1. Features were already extracted (user expects to see results)
+            # 2. Audio file is loaded
+            # 3. File is short enough (≤60s) for quick re-extraction
+            # 4. No extraction is currently in progress
             if (self._features is not None and
                 self._audio_data is not None and
                 self._audio_data.duration <= 60.0 and
@@ -793,8 +814,10 @@ class MainWindow(QMainWindow):
                 )
                 self._start_feature_extraction()
         else:
+            # Backend switch failed (backend not available)
             self._status_bar.showMessage(f"Failed to switch to {backend} backend")
-            # Reset combo to current backend
+            # Reset combo to show the actual current backend
+            # Block signals to prevent recursive call
             self._backend_combo.blockSignals(True)
             self._backend_combo.setCurrentText(get_current_backend_display())
             self._backend_combo.blockSignals(False)
