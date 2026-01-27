@@ -172,6 +172,7 @@ DEFAULTS = {
         'hnr_silence_threshold': 0.1, # HNR silence threshold
         'auto_extract_max_duration': 60.0,  # Auto-extract for files under this duration (seconds)
         'acoustic_backend': 'auto',  # Options: 'auto', 'Praatfan (slow)', 'Praatfan (fast)', 'Praatfan (GPL)', 'Praat'
+        'spectrogram_max_view_duration': 60.0,  # Only show spectrogram when view is ≤ this duration (seconds)
     },
 
     # -------------------------------------------------------------------------

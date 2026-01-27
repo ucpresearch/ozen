@@ -279,7 +279,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._freq_end: float = 5000.0  # End of frequency range
         self._features: AcousticFeatures | None = None
         self._cursor_time: float = 0.0
-        self._duration: float = 0.0
+        self._duration: float = 0.0  # Full audio duration (for pan/zoom limits)
+        self._spectrogram_time_range: tuple[float, float] | None = None  # Time range of current spectrogram
+        self._show_placeholder: bool = False  # Whether to show placeholder instead of spectrogram
+        self._placeholder_message: str = ""  # Message to show in placeholder
         self._is_dragging: bool = False
         self._selection_start: float | None = None
         self._selection_end: float | None = None
@@ -382,6 +385,22 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         cmap = create_spectrogram_colormap()
         self._spectrogram_img.setLookupTable(cmap.getLookupTable())
 
+        # Placeholder text item for when view is too wide
+        # Use pyqtgraph TextItem rendered on the plot for proper integration
+        self._placeholder_text = pg.TextItem(
+            text="",
+            color=(80, 80, 80),
+            anchor=(0.5, 0.5),  # Center the text
+            fill=pg.mkBrush(255, 255, 255, 220)
+        )
+        font = QFont()
+        font.setPointSize(14)
+        font.setBold(True)
+        self._placeholder_text.setFont(font)
+        self._placeholder_text.setZValue(500)  # Above spectrogram, below cursor
+        self._placeholder_text.hide()
+        self._plot.addItem(self._placeholder_text)
+
     def _setup_selection(self):
         """Setup selection region and play button."""
         colors = config['colors']
@@ -481,6 +500,30 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._cursor_line.setZValue(1000)  # Ensure cursor is always on top
         self._plot.addItem(self._cursor_line)
 
+    def set_audio_duration(self, duration: float, max_frequency: float = 5000.0):
+        """Set the full audio duration and frequency range.
+
+        This should be called when loading a new audio file, before
+        setting any spectrogram data. Sets up the view ranges properly
+        so placeholders display correctly.
+
+        Args:
+            duration: Full audio duration in seconds
+            max_frequency: Maximum frequency for Y axis (Hz)
+        """
+        self._duration = duration
+        self._freq_start = 0.0
+        self._freq_end = max_frequency
+        self._spectrogram_time_range = None
+        self._show_placeholder = False
+        self._spectrogram_data = None
+        self._times = None
+        self._frequencies = None
+        self._spectrogram_img.hide()
+        self._placeholder_text.hide()
+        self._plot.setYRange(0, max_frequency, padding=0)
+        self._plot.setXRange(0, duration, padding=0)
+
     def set_spectrogram(
         self,
         times: np.ndarray,
@@ -492,8 +535,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._frequencies = frequencies
         self._spectrogram_data = spectrogram_db
 
-        # Store duration for zoom limits
-        self._duration = times[-1] if len(times) > 0 else 0
+        # Store spectrogram time range (may be partial)
+        t_start = times[0] if len(times) > 0 else 0
+        t_end = times[-1] if len(times) > 0 else 0
+        self._spectrogram_time_range = (t_start, t_end)
 
         # Normalize to 0-1 range for colormap
         data_min = np.min(spectrogram_db)
@@ -502,9 +547,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         self._spectrogram_img.setImage(normalized.T)
 
-        # Set transform - start exactly at 0
-        t_start = 0  # Always start at 0 for alignment
-        t_end = times[-1] if len(times) > 0 else 1
+        # Set transform to position spectrogram at correct time/frequency
         f_start = frequencies[0] if len(frequencies) > 0 else 0
         f_end = frequencies[-1] if len(frequencies) > 0 else 5000
 
@@ -512,19 +555,61 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._freq_start = f_start
         self._freq_end = f_end
 
-        # The spectrogram data may not start exactly at 0, so we need to adjust
-        actual_t_start = times[0] if len(times) > 0 else 0
-        t_scale = (t_end - actual_t_start) / max(len(times), 1)
+        # Scale factors for the image
+        t_scale = (t_end - t_start) / max(len(times), 1)
         f_scale = (f_end - f_start) / max(len(frequencies), 1)
 
         transform = QTransform()
-        transform.translate(actual_t_start, f_start)
+        transform.translate(t_start, f_start)
         transform.scale(t_scale, f_scale)
         self._spectrogram_img.setTransform(transform)
 
-        # Set view ranges starting at 0
-        self._plot.setXRange(0, t_end, padding=0)
+        # Set Y range for frequency axis (this doesn't trigger time_range_changed)
         self._plot.setYRange(f_start, f_end, padding=0)
+
+        # NOTE: Do NOT set X range here - it triggers time_range_changed signal
+        # which causes sync loops. The caller is responsible for view range.
+
+        # Hide placeholder and show spectrogram
+        self._show_placeholder = False
+        self._placeholder_text.hide()
+        self._spectrogram_img.show()
+
+    def show_placeholder(self, message: str):
+        """Show a placeholder message instead of the spectrogram.
+
+        Args:
+            message: Text to display (e.g., "Zoom in for spectrogram")
+        """
+        self._show_placeholder = True
+        self._placeholder_message = message
+        self._placeholder_text.setText(message)
+        self._update_placeholder_position()
+        self._placeholder_text.show()
+        self._spectrogram_img.hide()
+        # Clear spectrogram data so has_spectrogram() returns False
+        self._spectrogram_data = None
+        self._spectrogram_time_range = None
+
+    def clear_spectrogram(self):
+        """Clear the spectrogram image (but keep axes/range intact)."""
+        self._spectrogram_img.hide()
+        self._spectrogram_data = None
+        self._times = None
+        self._frequencies = None
+        self._spectrogram_time_range = None
+
+    def has_spectrogram(self) -> bool:
+        """Check if a spectrogram is currently displayed."""
+        return self._spectrogram_data is not None and not self._show_placeholder
+
+    def get_spectrogram_time_range(self) -> tuple[float, float] | None:
+        """Get the time range of the currently computed spectrogram.
+
+        Returns:
+            Tuple of (start_time, end_time) or None if no spectrogram
+        """
+        return self._spectrogram_time_range
 
     def _update_pitch_axis_ticks(self):
         """Update the right axis to show pitch values on a logarithmic scale.
@@ -1016,7 +1101,17 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         """Handle view range changes."""
         x_range = self._plot.viewRange()[0]
         self._update_play_button()  # Reposition play button for new view
+        self._update_placeholder_position()  # Keep placeholder centered
         self.time_range_changed.emit(x_range[0], x_range[1])
+
+    def _update_placeholder_position(self):
+        """Update placeholder text position to center of visible view."""
+        if self._show_placeholder or self._placeholder_text.isVisible():
+            # Position text at center of visible view in data coordinates
+            view_range = self._plot.viewRange()
+            x_center = (view_range[0][0] + view_range[0][1]) / 2
+            y_center = (view_range[1][0] + view_range[1][1]) / 2
+            self._placeholder_text.setPos(x_center, y_center)
 
     def _on_selection_changed(self):
         """Handle selection region changes."""
@@ -1341,3 +1436,10 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         """Hide info label when mouse leaves widget."""
         self._info_label.hide()
         super().leaveEvent(ev)
+
+    def resizeEvent(self, ev):
+        """Handle resize to keep placeholder centered."""
+        super().resizeEvent(ev)
+        # Check attribute exists (resizeEvent can be called during __init__)
+        if getattr(self, '_show_placeholder', False):
+            self._update_placeholder_position()

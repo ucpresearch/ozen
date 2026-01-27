@@ -63,6 +63,45 @@ from ..annotation import (
 from ..config import config, reload_config
 
 
+class SpectrogramComputeThread(QThread):
+    """
+    Background thread for spectrogram computation.
+
+    Computes spectrogram in a separate thread to keep UI responsive
+    during panning and zooming.
+
+    Signals:
+        finished(tuple): (times, freqs, spec_db, start_time, end_time)
+        error(str): Error message if computation fails
+    """
+
+    finished = pyqtSignal(object)  # tuple of (times, freqs, spec_db, start, end)
+    error = pyqtSignal(str)
+
+    def __init__(self, file_path: str, window_length: float, max_frequency: float,
+                 start_time: float, end_time: float):
+        super().__init__()
+        self.file_path = file_path
+        self.window_length = window_length
+        self.max_frequency = max_frequency
+        self.start_time = start_time
+        self.end_time = end_time
+
+    def run(self):
+        try:
+            times, freqs, spec_db = compute_spectrogram(
+                self.file_path,
+                window_length=self.window_length,
+                max_frequency=self.max_frequency,
+                dynamic_range=70.0,
+                start_time=self.start_time,
+                end_time=self.end_time
+            )
+            self.finished.emit((times, freqs, spec_db, self.start_time, self.end_time))
+        except Exception as e:
+            self.error.emit(f"{e}\n{traceback.format_exc()}")
+
+
 class FeatureExtractionThread(QThread):
     """
     Background thread for acoustic feature extraction.
@@ -88,12 +127,15 @@ class FeatureExtractionThread(QThread):
     finished = pyqtSignal(object)  # AcousticFeatures or Exception
     error = pyqtSignal(str)
 
-    def __init__(self, file_path: str, time_step: float = None, preset: str = 'male'):
+    def __init__(self, file_path: str, time_step: float = None, preset: str = 'male',
+                 start_time: float = None, end_time: float = None):
         super().__init__()
         self.file_path = file_path
         # Use time_step from config if not specified
         self.time_step = time_step if time_step is not None else config['analysis']['time_step']
         self.preset = preset
+        self.start_time = start_time
+        self.end_time = end_time
 
     def run(self):
         try:
@@ -108,6 +150,8 @@ class FeatureExtractionThread(QThread):
                 max_formant=params['max_formant'],
                 pitch_floor=analysis_cfg['default_pitch_floor'],
                 pitch_ceiling=analysis_cfg['default_pitch_ceiling'],
+                start_time=self.start_time,
+                end_time=self.end_time,
                 progress_callback=lambda p: self.progress.emit(p)
             )
             self.finished.emit(features)
@@ -174,6 +218,11 @@ class MainWindow(QMainWindow):
         # Default tier names (from config or CLI --tiers)
         # Used when opening new files without an explicit TextGrid
         self._default_tier_names: list[str] = config['annotation'].get('default_tiers', [])
+
+        # Spectrogram computation state
+        self._spectrogram_thread: SpectrogramComputeThread | None = None
+        self._spectrogram_debounce_timer: QTimer | None = None
+        self._pending_spectrogram_range: tuple[float, float] | None = None
 
         self._setup_ui()
         self._setup_menus()
@@ -672,6 +721,9 @@ class MainWindow(QMainWindow):
         self._spectrogram.blockSignals(False)
         self._annotation_editor.blockSignals(False)
 
+        # Check if we need to compute/hide spectrogram based on view duration
+        self._check_spectrogram_threshold(start, end)
+
     def _sync_from_spectrogram(self, start: float, end: float):
         """Sync time range from spectrogram to other views."""
         self._waveform.blockSignals(True)
@@ -681,6 +733,9 @@ class MainWindow(QMainWindow):
         self._waveform.blockSignals(False)
         self._annotation_editor.blockSignals(False)
 
+        # Check if we need to compute/hide spectrogram based on view duration
+        self._check_spectrogram_threshold(start, end)
+
     def _sync_from_annotations(self, start: float, end: float):
         """Sync time range from annotations to other views."""
         self._waveform.blockSignals(True)
@@ -689,6 +744,179 @@ class MainWindow(QMainWindow):
         self._spectrogram.set_x_range(start, end)
         self._waveform.blockSignals(False)
         self._spectrogram.blockSignals(False)
+
+        # Check if we need to compute/hide spectrogram based on view duration
+        self._check_spectrogram_threshold(start, end)
+
+    def _check_spectrogram_threshold(self, start: float, end: float):
+        """Check if spectrogram should be computed or hidden based on view duration.
+
+        When the visible view is ≤ the threshold (default 60s), schedules
+        spectrogram computation for that region (debounced). When the view
+        is > threshold, shows a placeholder message instead.
+
+        Uses caching with two checks:
+        1. Coverage: if existing spectrogram covers >80% of the visible region
+        2. Resolution: if user has zoomed in >2x, recompute at higher resolution
+
+        Uses debouncing: waits 200ms after user stops panning before computing.
+        """
+        if not self._current_file_path or self._audio_data is None:
+            return
+
+        view_duration = end - start
+        max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
+
+        if view_duration <= max_view_duration:
+            # View is within threshold - check if we need to compute spectrogram
+            current_range = self._spectrogram.get_spectrogram_time_range()
+
+            needs_computation = False
+            if not self._spectrogram.has_spectrogram():
+                needs_computation = True
+            elif current_range is not None:
+                spec_start, spec_end = current_range
+                spec_duration = spec_end - spec_start
+
+                # Check 1: Coverage - does current spectrogram cover visible region?
+                overlap_start = max(start, spec_start)
+                overlap_end = min(end, spec_end)
+                overlap = max(0, overlap_end - overlap_start)
+                coverage = overlap / view_duration if view_duration > 0 else 0
+
+                # Check 2: Resolution - is user zoomed in significantly?
+                # If spectrogram covers much more than visible, it's being stretched
+                zoom_ratio = spec_duration / view_duration if view_duration > 0 else 1
+
+                # Recompute if:
+                # - Coverage is less than 80%, OR
+                # - Zoomed in more than 2x (spectrogram would be pixelated)
+                if coverage < 0.8 or zoom_ratio > 2.0:
+                    needs_computation = True
+
+            if needs_computation:
+                # Schedule debounced computation
+                self._schedule_spectrogram_computation(start, end)
+        else:
+            # View is too wide - show placeholder and cancel any pending computation
+            self._cancel_spectrogram_computation()
+            self._spectrogram.show_placeholder("Zoom in for spectrogram")
+
+    def _schedule_spectrogram_computation(self, start: float, end: float):
+        """Schedule spectrogram computation with debouncing.
+
+        Waits 200ms after user stops panning before starting computation.
+        This prevents computing spectrograms during rapid pan/zoom.
+        """
+        # Minimum duration for spectrogram (need enough samples for FFT window)
+        min_duration = 0.1  # 100ms minimum
+
+        view_duration = end - start
+        if view_duration < min_duration:
+            # View too small for meaningful spectrogram
+            return
+
+        # Add padding for smoother panning (20% on each side for more coverage)
+        padding = view_duration * 0.2
+        padded_start = max(0, start - padding)
+        padded_end = min(self._audio_data.duration, end + padding)
+
+        self._pending_spectrogram_range = (padded_start, padded_end)
+
+        # Cancel existing timer
+        if self._spectrogram_debounce_timer is not None:
+            self._spectrogram_debounce_timer.stop()
+
+        # Don't schedule if already computing the same range
+        if (self._spectrogram_thread is not None and
+            self._spectrogram_thread.isRunning() and
+            self._spectrogram_thread.start_time == padded_start and
+            self._spectrogram_thread.end_time == padded_end):
+            return
+
+        # Create debounce timer (200ms delay)
+        self._spectrogram_debounce_timer = QTimer()
+        self._spectrogram_debounce_timer.setSingleShot(True)
+        self._spectrogram_debounce_timer.timeout.connect(self._start_spectrogram_computation)
+        self._spectrogram_debounce_timer.start(200)
+
+    def _cancel_spectrogram_computation(self):
+        """Cancel any pending spectrogram computation."""
+        if self._spectrogram_debounce_timer is not None:
+            self._spectrogram_debounce_timer.stop()
+            self._spectrogram_debounce_timer = None
+        self._pending_spectrogram_range = None
+
+    def _start_spectrogram_computation(self):
+        """Start background spectrogram computation."""
+        if self._pending_spectrogram_range is None:
+            return
+
+        start, end = self._pending_spectrogram_range
+
+        # Don't start if already computing
+        if self._spectrogram_thread is not None and self._spectrogram_thread.isRunning():
+            # Re-schedule to run after current computation
+            self._spectrogram_debounce_timer = QTimer()
+            self._spectrogram_debounce_timer.setSingleShot(True)
+            self._spectrogram_debounce_timer.timeout.connect(self._start_spectrogram_computation)
+            self._spectrogram_debounce_timer.start(100)
+            return
+
+        # Get current settings
+        bandwidth = self._bandwidth_combo.currentText()
+        window_length = 0.005 if bandwidth == 'Wideband' else 0.025
+        max_freq = self._get_max_frequency()
+
+        self._status_bar.showMessage("Computing spectrogram...")
+
+        # Start background thread
+        self._spectrogram_thread = SpectrogramComputeThread(
+            self._current_file_path,
+            window_length=window_length,
+            max_frequency=max_freq,
+            start_time=start,
+            end_time=end
+        )
+        self._spectrogram_thread.finished.connect(self._on_spectrogram_computed)
+        self._spectrogram_thread.error.connect(self._on_spectrogram_error)
+        self._spectrogram_thread.start()
+
+    def _on_spectrogram_computed(self, result: tuple):
+        """Handle completed spectrogram computation."""
+        times, freqs, spec_db, start, end = result
+
+        # Check if view has changed significantly since we started
+        current_start, current_end = self._waveform.get_view_range()
+        view_duration = current_end - current_start
+        max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
+
+        # Only apply if view is still within threshold
+        if view_duration <= max_view_duration:
+            self._spectrogram.set_spectrogram(times, freqs, spec_db)
+            self._status_bar.showMessage(
+                f"Spectrogram ready ({end - start:.1f}s)", 2000
+            )
+
+            # Also extract features for this region if not already running
+            if self._feature_thread is None or not self._feature_thread.isRunning():
+                self._start_feature_extraction_for_view(start, end)
+        else:
+            self._status_bar.showMessage("", 0)
+
+        # Check if there's a new pending range that needs computation
+        if self._pending_spectrogram_range is not None:
+            pending_start, pending_end = self._pending_spectrogram_range
+            if pending_start != start or pending_end != end:
+                # New range requested, schedule computation
+                self._schedule_spectrogram_computation(
+                    current_start, current_end
+                )
+
+    def _on_spectrogram_error(self, error_msg: str):
+        """Handle spectrogram computation error."""
+        self._status_bar.showMessage("Spectrogram computation failed", 3000)
+        print(f"Spectrogram error: {error_msg}")
 
     def _on_cursor_moved(self, time: float):
         """Handle cursor movement."""
@@ -724,6 +952,7 @@ class MainWindow(QMainWindow):
             self._textgrid_path = None
             self._is_dirty = False
             self._global_undo_stack.clear()
+            self._features = None
 
             # Clear data points from previous file
             self._spectrogram.clear_data_points()
@@ -732,7 +961,14 @@ class MainWindow(QMainWindow):
             self._audio_data = load_audio(file_path)
             self._player.set_audio_data(self._audio_data)
 
-            # Display waveform
+            # Set audio duration and frequency range for spectrogram
+            # This also sets the initial view to full audio and clears any previous spectrogram
+            self._spectrogram.set_audio_duration(
+                self._audio_data.duration,
+                max_frequency=self._get_max_frequency()
+            )
+
+            # Display waveform (this also sets waveform view to full duration)
             self._waveform.set_audio_data(self._audio_data)
 
             # Initialize annotations with default tiers (from config/CLI or fallback)
@@ -823,74 +1059,96 @@ class MainWindow(QMainWindow):
             self._backend_combo.blockSignals(False)
 
     def _recompute_spectrogram(self):
-        """Recompute spectrogram with current settings."""
+        """Recompute spectrogram with current settings (for visible view)."""
         if not self._current_file_path:
             return
 
-        bandwidth = self._bandwidth_combo.currentText()
-        if bandwidth == 'Wideband':
-            window_length = 0.005  # 5ms - better time resolution
-        else:  # Narrowband
-            window_length = 0.025  # 25ms - better frequency resolution (shows harmonics)
+        # Clear current spectrogram to force recomputation
+        self._spectrogram.clear_spectrogram()
 
-        max_freq = self._get_max_frequency()
+        # Get visible view range
+        start, end = self._waveform.get_view_range()
+        view_duration = end - start
 
-        times, freqs, spec_db = compute_spectrogram(
-            self._current_file_path,
-            window_length=window_length,
-            max_frequency=max_freq,
-            dynamic_range=70.0
-        )
-        self._spectrogram.set_spectrogram(times, freqs, spec_db)
+        # Get max view duration threshold from config
+        max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
+
+        if view_duration > max_view_duration:
+            self._spectrogram.show_placeholder("Zoom in for spectrogram")
+        else:
+            # Use async computation
+            self._schedule_spectrogram_computation(start, end)
 
     def _compute_analysis(self, file_path: str):
-        """Compute spectrogram (fast) - features extracted separately."""
+        """Initialize analysis for loaded audio file - all computation is async."""
         try:
             self._current_file_path = file_path
             self._current_formant_preset = 'female'  # Default
 
-            # Compute spectrogram based on current bandwidth and frequency settings
-            bandwidth = self._bandwidth_combo.currentText()
-            if bandwidth == 'Wideband':
-                window_length = 0.005  # Better time resolution
-            else:
-                window_length = 0.025  # Better frequency resolution
-
-            max_freq = self._get_max_frequency()
-
-            times, freqs, spec_db = compute_spectrogram(
-                file_path,
-                window_length=window_length,
-                max_frequency=max_freq,
-                dynamic_range=70.0
-            )
-            self._spectrogram.set_spectrogram(times, freqs, spec_db)
+            # Get max view duration threshold from config
+            max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
 
             # Enable playback and feature extraction
             self._play_btn.setEnabled(True)
             self._stop_btn.setEnabled(True)
             self._extract_btn.setEnabled(True)
+            self._extract_btn.setText("Extract Features")
 
-            # Auto-extract features for files under 60 seconds
-            if self._audio_data.duration <= 60.0:
-                self._status_bar.showMessage(
-                    f"Loaded: {Path(file_path).name} - Auto-extracting features..."
-                )
-                # Start extraction automatically after a short delay
-                QTimer.singleShot(100, self._start_feature_extraction)
-            else:
+            # Check if file is too long for immediate spectrogram
+            if self._audio_data.duration > max_view_duration:
+                # Show placeholder - spectrogram will be computed when zoomed in
+                self._spectrogram.show_placeholder("Zoom in for spectrogram")
                 self._status_bar.showMessage(
                     f"Loaded: {Path(file_path).name} "
-                    f"({self._audio_data.duration:.2f}s, {self._audio_data.sample_rate}Hz) "
-                    f"- Click 'Extract Features' for overlays"
+                    f"({self._audio_data.duration:.2f}s) - Zoom to ≤{max_view_duration:.0f}s for spectrogram"
                 )
+            else:
+                # File is short enough - compute spectrogram async for entire file
+                self._status_bar.showMessage(
+                    f"Loaded: {Path(file_path).name} - Computing spectrogram..."
+                )
+                # Set the view to show the whole file
+                self._waveform.setXRange(0, self._audio_data.duration, padding=0)
+                # Schedule async spectrogram computation (no debounce for initial load)
+                self._pending_spectrogram_range = (0, self._audio_data.duration)
+                self._start_spectrogram_computation()
+
+                # Auto-extract features for files under 60 seconds
+                QTimer.singleShot(100, self._start_feature_extraction)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Analysis failed: {e}")
             self._status_bar.showMessage("Analysis error")
 
     def _start_feature_extraction(self):
-        """Start feature extraction in background thread."""
+        """Start feature extraction in background thread.
+
+        For large files, extracts only the visible region.
+        """
+        if not self._current_file_path:
+            return
+
+        # For large files, extract only the visible region
+        max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
+        start_time = None
+        end_time = None
+
+        if self._audio_data and self._audio_data.duration > max_view_duration:
+            start, end = self._waveform.get_view_range()
+            view_duration = end - start
+            if view_duration <= max_view_duration:
+                start_time = max(0, start)
+                end_time = min(self._audio_data.duration, end)
+
+        self._start_feature_extraction_for_view(start_time, end_time)
+
+    def _start_feature_extraction_for_view(self, start_time: float = None, end_time: float = None):
+        """Start feature extraction for a specific time range.
+
+        Args:
+            start_time: Start time (None = beginning)
+            end_time: End time (None = end of file)
+        """
         if not self._current_file_path:
             return
 
@@ -899,15 +1157,24 @@ class MainWindow(QMainWindow):
 
         # Get current formant preset
         preset = getattr(self, '_current_formant_preset', 'male')
-        self._status_bar.showMessage(
-            f"Extracting features ({preset} preset)..."
-        )
 
-        # Use larger time step for faster extraction
+        if start_time is not None and end_time is not None:
+            self._status_bar.showMessage(
+                f"Extracting features for {start_time:.1f}-{end_time:.1f}s ({preset} preset)..."
+            )
+        else:
+            self._status_bar.showMessage(
+                f"Extracting features ({preset} preset)..."
+            )
+
+        # Use larger time_step (0.02s) for faster extraction while maintaining
+        # sufficient resolution for display (50 frames/sec)
         self._feature_thread = FeatureExtractionThread(
             self._current_file_path,
-            time_step=0.01,
-            preset=preset
+            time_step=0.02,
+            preset=preset,
+            start_time=start_time,
+            end_time=end_time
         )
         self._feature_thread.progress.connect(self._on_feature_progress)
         self._feature_thread.finished.connect(self._on_features_ready)

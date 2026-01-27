@@ -10,7 +10,7 @@
 #   python -m ozen -c ozen.praat.yaml [audio.wav]
 
 analysis:
-  acoustic_backend: praat
+  acoustic_backend: parselmouth
 
 colors:
   # Waveform - black on white like Praat
