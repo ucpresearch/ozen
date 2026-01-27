@@ -531,22 +531,24 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         # Create tick values at nice pitch intervals based on range
         p_min = self._pitch_min
         p_max = self._pitch_max
-        # Generate ticks: every 50 Hz up to 200, then every 100 Hz
-        pitch_ticks = [t for t in [50, 100, 150, 200, 250, 300, 350, 400, 500, 600, 800]
+        # Generate ticks at musically meaningful intervals
+        pitch_ticks = [t for t in [50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 600, 800]
                        if p_min <= t <= p_max]
 
-        # Convert pitch values to frequency axis positions
-        p_min = self._pitch_min
-        p_max = self._pitch_max
+        # Convert pitch values to frequency axis positions using LOG SCALE
+        # This gives equal visual spacing for equal musical intervals
         f_start = self._freq_start
         f_end = self._freq_end
         freq_range = f_end - f_start
+        log_p_min = np.log(p_min)
+        log_p_max = np.log(p_max)
+        log_range = log_p_max - log_p_min
 
         ticks = []
         for pitch in pitch_ticks:
             if p_min <= pitch <= p_max:
-                # Map pitch (p_min to p_max) to frequency axis (f_start to f_end)
-                freq_pos = (pitch - p_min) / (p_max - p_min) * freq_range + f_start
+                # Map pitch to frequency axis using log scale
+                freq_pos = (np.log(pitch) - log_p_min) / log_range * freq_range + f_start
                 ticks.append((freq_pos, str(int(pitch))))
 
         self._pitch_axis.setTicks([ticks])
@@ -564,6 +566,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         f = self._features
 
         # Pitch - scaled to display on spectrogram with configurable range
+        # Uses LOG SCALE for perceptually uniform spacing (pitch is logarithmic)
         # Keep NaN values so connect='finite' breaks the line at unvoiced frames
         if self._track_visibility['pitch'] and self._frequencies is not None:
             if len(f.f0) > 0:
@@ -576,8 +579,14 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
                 f_end = self._freq_end
                 freq_range = f_end - f_start
 
-                # Map pitch to frequency axis for display (NaN values stay NaN)
-                scaled_pitch = (f.f0 - p_min) / (p_max - p_min) * freq_range + f_start
+                # Map pitch to frequency axis using LOG SCALE (NaN values stay NaN)
+                # This gives equal visual distance for equal musical intervals
+                log_p_min = np.log(p_min)
+                log_p_max = np.log(p_max)
+                log_range = log_p_max - log_p_min
+                # Suppress warnings for log(NaN) - result is NaN which is what we want
+                with np.errstate(invalid='ignore'):
+                    scaled_pitch = (np.log(f.f0) - log_p_min) / log_range * freq_range + f_start
                 # Clip valid values to range (NaN stays NaN)
                 scaled_pitch = np.clip(scaled_pitch, f_start, f_end)
 
