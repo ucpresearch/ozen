@@ -170,12 +170,13 @@ Config files can customize colors, formant presets, default tiers, and more. See
 
 Ozen supports multiple acoustic analysis backends. The default (`praatfan`) is pure Python and works everywhere. For better performance or compatibility, install additional backends:
 
-| Backend | Install | License | Notes |
-|---------|---------|---------|-------|
-| Praatfan (slow) | Included | MIT | Pure Python, portable |
-| Praatfan (fast) | `pip install praatfan_rust` | MIT | Rust, ~10x faster |
-| Praatfan (GPL) | `pip install praatfan_gpl` | GPL | Rust, from praatfan-core-rs |
-| Praat | `pip install praat-parselmouth` | GPL | Original Praat bindings |
+|  Backend | Install | License | Notes | Repository |
+|----|----|----|----|----|
+|  Praatfan (slow) | Included | MIT | Pure Python, portable | [Praatfan](https://github.com/ucpresearch/praatfan-core-clean) |
+|  Praatfan (fast) | use [the release page](https://github.com/ucpresearch/praatfan-core-rs/releases) | MIT | Rust, ~10x faster | [Praatfan](https://github.com/ucpresearch/praatfan-core-clean/releases) |
+|  Praatfan (GPL) | use [the release page](https://github.com/ucpresearch/praatfan-core-rs/releases) | GPL | Rust, from praatfan-core-rs | [Praatfan GPL](https://github.com/ucpresearch/praatfan-core-rs] |
+|  Praat (via Parselmouth) | `pip install praat-parselmouth` | GPL | Original Praat bindings | [Praat](https://github.com/praat/praat.github.io) [Parselmouth Website](https://parselmouth.readthedocs.io/en/stable/) |
+
 
 Switch backends in the UI via the Backend dropdown, or set `analysis.acoustic_backend` in your config file.
 
@@ -188,7 +189,7 @@ Setting `waveform_line_width` to greater than 1 in the config causes audio stati
 
 Ozen relies on the following projects for acoustic analysis:
 
-**praatfan** - Clean-room reimplementation of Praat's acoustic algorithms:
+**praatfan** - Clean-room reimplementation of Praat's acoustic algorithms in Parselmouth:
 > https://github.com/ucpresearch/praatfan-core-clean
 
 **Praat** - The gold standard for phonetic analysis:
