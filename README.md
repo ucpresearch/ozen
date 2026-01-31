@@ -13,6 +13,7 @@ A Python-based acoustic analysis and annotation tool inspired by Praat, built fo
 - **Acoustic Overlays** - Pitch, formants, intensity, center of gravity, HNR
 - **Audio Playback** - Play selections, visual cursor tracking
 - **Annotation System** - Multiple tiers, Praat TextGrid import/export
+- **Data Collection Points** - Click to mark positions and capture acoustic measurements
 - **Undo Support** - Ctrl+Z for boundary and label changes
 
 ## Installation
@@ -132,6 +133,19 @@ Config files can customize colors, formant presets, default tiers, and more. See
 4. **Delete boundaries** - Hover over a boundary (turns orange) and press Delete
 5. **Play interval** - Click the green play button on selected intervals
 
+### Data Collection Points
+
+| Action | Method |
+|--------|--------|
+| Add point | Double-click on spectrogram |
+| Move point | Click and drag |
+| Remove point | Right-click → "Remove" |
+| Copy all points | Ctrl+C (copies visible measurements as TSV) |
+| Export points | File > Export Point Information... |
+| Import points | File > Import Point Information... |
+
+**Data points** capture acoustic measurements at specific time-frequency positions on the spectrogram. When you press **Ctrl+C**, all points are copied to the clipboard as tab-separated values, including only the measurements that are currently visible (checked in the overlay toggles). This allows quick data export to spreadsheets.
+
 ### File Operations
 
 | Key | Action |
@@ -139,6 +153,7 @@ Config files can customize colors, formant presets, default tiers, and more. See
 | Ctrl+O | Open audio file |
 | Ctrl+S | Save TextGrid (to current path, or prompts if none) |
 | Ctrl+Shift+S | Save TextGrid as... |
+| Ctrl+C | Copy all data points to clipboard (visible measurements only) |
 
 ## Save Behavior
 
@@ -175,7 +190,7 @@ Ozen supports multiple acoustic analysis backends. The default (`praatfan`) is p
 |  Praatfan (slow) | Included | MIT | Pure Python, portable | [Praatfan](https://github.com/ucpresearch/praatfan-core-clean) |
 |  Praatfan (fast) | use [the release page](https://github.com/ucpresearch/praatfan-core-rs/releases) | MIT | Rust, ~10x faster | [Praatfan](https://github.com/ucpresearch/praatfan-core-clean/releases) |
 |  Praatfan (GPL) | use [the release page](https://github.com/ucpresearch/praatfan-core-rs/releases) | GPL | Rust, from praatfan-core-rs | [Praatfan GPL](https://github.com/ucpresearch/praatfan-core-rs) |
-|  Praat (via Parselmouth) | `pip install praat-parselmouth` | GPL | Original Praat bindings | [Praat](https://github.com/praat/praat.github.io) [Parselmouth Website](https://parselmouth.readthedocs.io/en/stable/) |
+|  Praat (via Parselmouth) | `pip install praat-parselmouth` | GPL | Original Praat bindings | [Praat](https://github.com/praat/praat.github.io), [Parselmouth Website](https://parselmouth.readthedocs.io/en/stable/) |
 
 
 Switch backends in the UI via the Backend dropdown, or set `analysis.acoustic_backend` in your config file.

@@ -39,8 +39,8 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF
-from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath, QPolygonF
-from PyQt6.QtWidgets import QGraphicsItem, QMenu
+from PyQt6.QtGui import QColor, QTransform, QFont, QFontDatabase, QPainterPath, QPolygonF, QClipboard
+from PyQt6.QtWidgets import QGraphicsItem, QMenu, QApplication
 
 from ..analysis.acoustic import AcousticFeatures
 from ..config import config
@@ -272,6 +272,9 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        # Enable keyboard focus for Ctrl+C shortcut
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
         self._spectrogram_data: np.ndarray | None = None
         self._times: np.ndarray | None = None
         self._frequencies: np.ndarray | None = None
@@ -305,6 +308,7 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
         self._data_points = DataPointCollection()
         self._data_point_items: dict[int, DataPointItem] = {}  # point_id -> item
         self._hovered_point_id: int | None = None
+        self._selected_point_id: int | None = None  # Persists when clicked
         self._dragging_point_id: int | None = None
         self._drag_start_pos: tuple[float, float] | None = None
 
@@ -1139,11 +1143,13 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             point = self._get_data_point_at_position(x, y)
             if point:
                 self._dragging_point_id = point.id
+                self._selected_point_id = point.id  # Also select it for Ctrl+C
                 self._drag_start_pos = (point.time, point.frequency)
                 ev.accept()
                 return
 
-            # Start new selection
+            # Start new selection (clicking on empty space)
+            self._selected_point_id = None  # Deselect any selected point
             self._selection_start = x
             self._is_dragging = True
             self._selection_region.setRegion([x, x])
@@ -1346,6 +1352,84 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
 
         ev.accept()
 
+    def keyPressEvent(self, ev):
+        """Handle keyboard shortcuts."""
+        # Ctrl+C or Cmd+C: Copy all data points to clipboard
+        if (ev.key() == Qt.Key.Key_C and
+            (ev.modifiers() == Qt.KeyboardModifier.ControlModifier or
+             ev.modifiers() == Qt.KeyboardModifier.MetaModifier)):
+            if self._copy_all_points_to_clipboard():
+                ev.accept()
+                return
+
+        super().keyPressEvent(ev)
+
+    def _copy_all_points_to_clipboard(self) -> bool:
+        """Copy all data points to clipboard as TSV.
+
+        Returns:
+            True if points were copied, False if no points exist
+        """
+        points = self._data_points.points
+
+        if not points:
+            return False
+
+        # Build column list based on visible tracks
+        columns = ['Time', 'Frequency']
+
+        # Add acoustic value columns for visible tracks only
+        acoustic_columns = []
+        if self._track_visibility.get('pitch', False):
+            acoustic_columns.append('Pitch')
+
+        if self._track_visibility.get('formants', False):
+            acoustic_columns.extend(['F1', 'F2', 'F3', 'F4'])
+
+        if self._track_visibility.get('intensity', False):
+            acoustic_columns.append('Intensity')
+
+        if self._track_visibility.get('cog', False):
+            acoustic_columns.append('CoG')
+
+        if self._track_visibility.get('hnr', False):
+            acoustic_columns.append('HNR')
+
+        if self._track_visibility.get('spectral_tilt', False):
+            acoustic_columns.append('Tilt')
+
+        if self._track_visibility.get('a1p0', False):
+            acoustic_columns.append('A1-P0')
+
+        if self._track_visibility.get('nasal_murmur', False):
+            acoustic_columns.append('Nasal')
+
+        columns.extend(acoustic_columns)
+
+        # Build rows
+        rows = []
+        sorted_points = sorted(points, key=lambda p: p.time)
+
+        for point in sorted_points:
+            row = [f"{point.time:.4f}", f"{point.frequency:.1f}"]
+
+            # Add acoustic values in column order
+            for col in acoustic_columns:
+                # Map column name to acoustic_values key
+                value = point.acoustic_values.get(col, '')
+                row.append(str(value) if value else '')
+
+            rows.append('\t'.join(row))
+
+        # Format as tab-separated values with header
+        clipboard_text = '\t'.join(columns) + '\n' + '\n'.join(rows)
+
+        # Copy to clipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(clipboard_text)
+
+        return True
+
     def _get_acoustic_values_at_time(self, time: float) -> dict:
         """Get acoustic feature values at a specific time."""
         values = {}
@@ -1431,6 +1515,11 @@ class SpectrogramWidget(pg.GraphicsLayoutWidget):
             self._info_label.show()
         else:
             self._info_label.hide()
+
+    def enterEvent(self, ev):
+        """Grab focus when mouse enters for keyboard shortcuts."""
+        self.setFocus()
+        super().enterEvent(ev)
 
     def leaveEvent(self, ev):
         """Hide info label when mouse leaves widget."""

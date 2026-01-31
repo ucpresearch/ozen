@@ -1836,10 +1836,15 @@ class MainWindow(QMainWindow):
             key = event.key()
             modifiers = event.modifiers()
 
+            # Allow standard editing shortcuts to pass through
+            # (Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A for copy/cut/paste/select all)
+            ctrl_or_meta = (modifiers == Qt.KeyboardModifier.ControlModifier or
+                           modifiers == Qt.KeyboardModifier.MetaModifier)
+            if ctrl_or_meta and key in (Qt.Key.Key_C, Qt.Key.Key_X, Qt.Key.Key_V, Qt.Key.Key_A):
+                return False  # Let the event propagate normally
+
             # Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac) for undo
-            is_undo = (key == Qt.Key.Key_Z and
-                      (modifiers == Qt.KeyboardModifier.ControlModifier or
-                       modifiers == Qt.KeyboardModifier.MetaModifier))
+            is_undo = (key == Qt.Key.Key_Z and ctrl_or_meta)
 
             if is_undo:
                 self._global_undo()
