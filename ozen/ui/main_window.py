@@ -633,12 +633,12 @@ class MainWindow(QMainWindow):
         # Zoom controls
         zoom_in_btn = QPushButton("+ Zoom In")
         zoom_in_btn.clicked.connect(self._zoom_in)
-        zoom_in_btn.setToolTip("Zoom in (Ctrl++)")
+        zoom_in_btn.setToolTip("Zoom in (↑ or Ctrl++)")
         toolbar.addWidget(zoom_in_btn)
 
         zoom_out_btn = QPushButton("− Zoom Out")
         zoom_out_btn.clicked.connect(self._zoom_out)
-        zoom_out_btn.setToolTip("Zoom out (Ctrl+-)")
+        zoom_out_btn.setToolTip("Zoom out (↓ or Ctrl+-)")
         toolbar.addWidget(zoom_out_btn)
 
         zoom_sel_btn = QPushButton("Zoom Sel")
@@ -1899,6 +1899,10 @@ class MainWindow(QMainWindow):
             self._pan_left()
         elif key == Qt.Key.Key_Right:
             self._pan_right()
+        elif key == Qt.Key.Key_Up:
+            self._zoom_in()
+        elif key == Qt.Key.Key_Down:
+            self._zoom_out()
         elif key == Qt.Key.Key_Z:
             self._zoom_to_selection()
         elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:

@@ -111,6 +111,10 @@ Config files can customize colors, formant presets, default tiers, and more. See
 
 | Key | Action |
 |-----|--------|
+| ↑ (Up arrow) | Zoom in |
+| ↓ (Down arrow) | Zoom out |
+| ← (Left arrow) | Pan left |
+| → (Right arrow) | Pan right |
 | Scroll wheel | Zoom in/out (centered on cursor) |
 | Horizontal scroll | Pan left/right |
 
