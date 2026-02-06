@@ -1043,8 +1043,8 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
 
         # Vertical scroll = zoom only, centered on mouse position
         if delta_y != 0 and delta_x == 0:
-            # Don't zoom in past 1ms view (sub-millisecond ticks aren't useful)
-            if delta_y > 0 and x_range <= 0.001:
+            # Don't zoom in past 10ms view
+            if delta_y > 0 and x_range <= 0.01:
                 ev.accept()
                 return
 
@@ -1063,7 +1063,7 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
 
             # Calculate new range keeping mouse position fixed
             left_frac = (mouse_x - x_min) / x_range
-            new_range = max(x_range * factor, 0.001)
+            new_range = max(x_range * factor, 0.01)
 
             new_min = mouse_x - left_frac * new_range
             new_max = mouse_x + (1 - left_frac) * new_range

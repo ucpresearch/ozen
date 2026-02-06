@@ -55,6 +55,7 @@ _backend_initialized = False
 BACKEND_DISPLAY_NAMES = {
     'praatfan': 'Praatfan (slow)',
     'praatfan_rust': 'Praatfan (fast)',
+    'praatfan_gpl': 'Praatfan (GPL)',
     'parselmouth': 'Praat',
 }
 

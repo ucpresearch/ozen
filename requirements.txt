@@ -1,11 +1,9 @@
 PyQt6>=6.6.0
 pyqtgraph>=0.13.0
-praatfan @ git+https://github.com/ucpresearch/praatfan-core-clean.git
+praatfan
+praatfan_rust
 
 # Optional backends (user installs separately):
-# praatfan_rust (MIT) - Rust implementation, install pre-built wheel from GitHub releases:
-#   pip install "https://github.com/ucpresearch/praatfan-core-clean/releases/download/v0.1.0/praatfan_rust-0.1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-#   See https://github.com/ucpresearch/praatfan-core-clean/releases for other platforms/Python versions
 # praatfan_gpl (GPL) - Separate Rust implementation, install wheel from GitHub releases:
 #   pip install https://github.com/ucpresearch/praatfan-core-rs/releases/download/v0.1.0/praatfan_gpl-0.1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 #   See https://github.com/ucpresearch/praatfan-core-rs/releases for other platforms/Python versions

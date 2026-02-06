@@ -1272,8 +1272,8 @@ class MainWindow(QMainWindow):
         self._playback_timer.stop()
         self._play_btn.setText("▶ Play")
 
-    # Minimum visible duration (1ms) - prevents zooming to sub-millisecond ticks
-    MIN_VIEW_DURATION = 0.001
+    # Minimum visible duration (10ms) - prevents zooming to sub-millisecond ticks
+    MIN_VIEW_DURATION = 0.01
 
     def _zoom_in(self):
         """Zoom in on time axis."""
