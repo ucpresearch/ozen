@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         self._textgrid_path: str | None = None  # Current TextGrid save path
         self._is_dirty: bool = False  # True if unsaved changes exist
         self._last_points_dir: str | None = None  # Last directory used for point export/import
+        self._current_formant_preset: str = 'female'  # Default formant preset (matches UI combo)
 
         # Global undo stack: list of ('annotation' | 'data_point') entries
         # Records the order of undoable operations across both systems
@@ -245,9 +246,6 @@ class MainWindow(QMainWindow):
 
         # Install event filter to catch key events for text input
         self.installEventFilter(self)
-
-        # Setup global keyboard shortcuts
-        self._setup_shortcuts()
 
     def _setup_shortcuts(self):
         """Setup global keyboard shortcuts that work regardless of focus."""
@@ -651,11 +649,6 @@ class MainWindow(QMainWindow):
         fit_btn.setToolTip("Fit to window (Ctrl+0)")
         toolbar.addWidget(fit_btn)
 
-    def _setup_shortcuts(self):
-        """Setup keyboard shortcuts."""
-        # Space for play/pause
-        pass  # Handled by keyPressEvent
-
     def _connect_signals(self):
         """Connect widget signals."""
         # Synchronize view ranges between all views
@@ -964,6 +957,7 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(f"Loading {Path(file_path).name}...")
 
             # Reset state for new file
+            self._current_file_path = file_path
             self._textgrid_path = None
             self._is_dirty = False
             self._global_undo_stack.clear()
@@ -1097,9 +1091,6 @@ class MainWindow(QMainWindow):
     def _compute_analysis(self, file_path: str):
         """Initialize analysis for loaded audio file - all computation is async."""
         try:
-            self._current_file_path = file_path
-            self._current_formant_preset = 'female'  # Default
-
             # Get max view duration threshold from config
             max_view_duration = config['analysis'].get('spectrogram_max_view_duration', 60.0)
 
@@ -1171,7 +1162,7 @@ class MainWindow(QMainWindow):
         self._extract_btn.setText("Extracting...")
 
         # Get current formant preset
-        preset = getattr(self, '_current_formant_preset', 'male')
+        preset = self._current_formant_preset
 
         if start_time is not None and end_time is not None:
             self._status_bar.showMessage(

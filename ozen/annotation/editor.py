@@ -856,7 +856,7 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
                 tier.remove_boundary(boundary_idx)
                 self._clear_interval_selection()
                 self.refresh()
-                self.boundary_removed.emit(tier_idx, boundary_time)
+                self.boundary_removed.emit(tier_idx, boundary_idx)
 
             ev.accept()
             return
@@ -1108,7 +1108,9 @@ class AnnotationEditorWidget(pg.GraphicsLayoutWidget):
 
         boundary_idx, _, _ = tier.find_nearest_boundary(self._cursor_time)
         if boundary_idx >= 0:
+            boundary_time = tier.boundaries[boundary_idx]
             tier.remove_boundary(boundary_idx)
+            self._push_undo('remove_boundary', tier_idx, boundary_time)
             self.refresh()
             self.boundary_removed.emit(tier_idx, boundary_idx)
 
