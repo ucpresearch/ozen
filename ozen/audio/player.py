@@ -45,6 +45,7 @@ class AudioPlayer:
         self._playback_started_at: float = 0.0  # Wall clock time when playback started
         self._playback_offset: float = 0.0  # Position offset when playback started
         self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
 
         # User-provided callbacks for playback events
         self._on_position_changed: Callable[[float], None] | None = None
@@ -139,8 +140,6 @@ class AudioPlayer:
 
         def playback_thread():
             try:
-                # Small delay for macOS CoreAudio to settle after stop()
-                time.sleep(0.05)
                 sd.play(samples, sr)
                 sd.wait()
             except Exception:
@@ -153,8 +152,8 @@ class AudioPlayer:
                         if self._on_playback_finished:
                             self._on_playback_finished()
 
-        thread = threading.Thread(target=playback_thread, daemon=True)
-        thread.start()
+        self._thread = threading.Thread(target=playback_thread, daemon=True)
+        self._thread.start()
 
     def pause(self):
         """Pause playback."""
@@ -164,6 +163,9 @@ class AudioPlayer:
                 self._playback_offset = self.current_time
                 self._is_playing = False
             sd.stop()
+            if self._thread is not None and self._thread.is_alive():
+                self._thread.join(timeout=1.0)
+            self._thread = None
 
     def stop(self):
         """Stop playback and reset position."""
@@ -171,6 +173,11 @@ class AudioPlayer:
             self._is_playing = False
             self._playback_offset = self._start_time
         sd.stop()
+        # Wait for playback thread to finish so PortAudio fully cleans up
+        # before any subsequent sd.play() call
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        self._thread = None
 
     def seek(self, time_pos: float):
         """Seek to a specific time."""
