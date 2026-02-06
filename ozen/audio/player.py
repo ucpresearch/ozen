@@ -32,6 +32,9 @@ class AudioPlayer:
     - Real-time position tracking via callbacks
     - Thread-safe state management (audio runs on a separate thread)
 
+    All PortAudio calls (sd.play/sd.stop) happen on the playback thread
+    to avoid cross-thread races that cause double-free crashes.
+
     Attributes:
         is_playing: True if audio is currently playing
         current_time: Current playback position in seconds
@@ -46,6 +49,7 @@ class AudioPlayer:
         self._playback_offset: float = 0.0  # Position offset when playback started
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
 
         # User-provided callbacks for playback events
         self._on_position_changed: Callable[[float], None] | None = None
@@ -88,6 +92,12 @@ class AudioPlayer:
         # Clamp to region bounds
         return min(pos, self._end_time)
 
+    def _wait_for_thread(self):
+        """Wait for the playback thread to finish."""
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        self._thread = None
+
     def play(self, start_time: Optional[float] = None, end_time: Optional[float] = None):
         """
         Start playback.
@@ -117,6 +127,7 @@ class AudioPlayer:
         self._playback_offset = self._start_time
         self._playback_started_at = time.time()
         self._is_playing = True
+        self._stop_event.clear()
 
         # Extract the region to play
         start_frame = int(self._start_time * sr)
@@ -141,10 +152,23 @@ class AudioPlayer:
         def playback_thread():
             try:
                 sd.play(samples, sr)
-                sd.wait()
+                # Poll for completion or stop request instead of sd.wait()
+                # so that sd.stop() is only ever called from this thread
+                while not self._stop_event.is_set():
+                    try:
+                        stream = sd.get_stream()
+                        if stream is None or not stream.active:
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.01)
             except Exception:
                 pass
             finally:
+                try:
+                    sd.stop()
+                except Exception:
+                    pass
                 with self._lock:
                     if self._is_playing:  # Only if not manually stopped
                         self._is_playing = False
@@ -162,22 +186,16 @@ class AudioPlayer:
                 # Record current position before stopping
                 self._playback_offset = self.current_time
                 self._is_playing = False
-            sd.stop()
-            if self._thread is not None and self._thread.is_alive():
-                self._thread.join(timeout=1.0)
-            self._thread = None
+            self._stop_event.set()
+            self._wait_for_thread()
 
     def stop(self):
         """Stop playback and reset position."""
         with self._lock:
             self._is_playing = False
             self._playback_offset = self._start_time
-        sd.stop()
-        # Wait for playback thread to finish so PortAudio fully cleans up
-        # before any subsequent sd.play() call
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        self._thread = None
+        self._stop_event.set()
+        self._wait_for_thread()
 
     def seek(self, time_pos: float):
         """Seek to a specific time."""
