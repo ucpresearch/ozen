@@ -1272,13 +1272,18 @@ class MainWindow(QMainWindow):
         self._playback_timer.stop()
         self._play_btn.setText("▶ Play")
 
+    # Minimum visible duration (1ms) - prevents zooming to sub-millisecond ticks
+    MIN_VIEW_DURATION = 0.001
+
     def _zoom_in(self):
         """Zoom in on time axis."""
         if self._audio_data is None:
             return
         start, end = self._waveform.get_view_range()
+        if end - start <= self.MIN_VIEW_DURATION:
+            return
         center = (start + end) / 2
-        width = (end - start) / 2  # Halve the width
+        width = max((end - start) / 2, self.MIN_VIEW_DURATION)
         self._waveform.setXRange(center - width / 2, center + width / 2)
 
     def _zoom_out(self):
