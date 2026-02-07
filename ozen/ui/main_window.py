@@ -45,7 +45,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QProgressDialog, QStatusBar, QToolBar,
     QCheckBox, QComboBox, QLabel, QSplitter, QGroupBox,
-    QMessageBox, QPushButton, QInputDialog
+    QMessageBox, QPushButton, QInputDialog,
+    QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGridLayout, QSpinBox
 )
 
 from ..audio.loader import load_audio, AudioData
@@ -157,6 +158,159 @@ class FeatureExtractionThread(QThread):
             self.finished.emit(features)
         except Exception as e:
             self.error.emit(f"{e}\n{traceback.format_exc()}")
+
+
+class ExportFigureDialog(QDialog):
+    """Dialog for exporting the current view as a publication-quality figure."""
+
+    # Overlay display names and internal keys
+    OVERLAY_NAMES = [
+        ('pitch', 'Pitch (F0)'),
+        ('formants', 'Formants (F1–F4)'),
+        ('intensity', 'Intensity'),
+        ('cog', 'Center of Gravity'),
+        ('hnr', 'HNR'),
+        ('spectral_tilt', 'Spectral Tilt'),
+        ('a1p0', 'A1–P0 Nasal Ratio'),
+        ('nasal_murmur', 'Nasal Murmur Ratio'),
+    ]
+
+    def __init__(self, parent=None, current_overlays: dict[str, bool] | None = None,
+                 view_start: float = 0.0, view_end: float = 1.0,
+                 duration: float = 1.0, default_path: str = ''):
+        super().__init__(parent)
+        self.setWindowTitle("Export Figure")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+
+        # -- File path --
+        file_layout = QHBoxLayout()
+        self._path_label = QLabel(default_path or "(no file selected)")
+        self._path_label.setStyleSheet("color: #444;")
+        self._browse_btn = QPushButton("Browse...")
+        self._browse_btn.clicked.connect(self._browse)
+        file_layout.addWidget(self._path_label, 1)
+        file_layout.addWidget(self._browse_btn)
+        layout.addWidget(QLabel("Output file:"))
+        layout.addLayout(file_layout)
+        self._file_path = default_path
+
+        # -- Time range --
+        time_group = QGroupBox("Time Range")
+        time_layout = QFormLayout(time_group)
+
+        self._use_view_range = QCheckBox("Use current view range")
+        self._use_view_range.setChecked(True)
+        self._use_view_range.toggled.connect(self._on_view_range_toggled)
+        time_layout.addRow(self._use_view_range)
+
+        self._start_spin = QDoubleSpinBox()
+        self._start_spin.setRange(0, duration)
+        self._start_spin.setDecimals(3)
+        self._start_spin.setSuffix(" s")
+        self._start_spin.setValue(view_start)
+        self._start_spin.setEnabled(False)
+        time_layout.addRow("Start:", self._start_spin)
+
+        self._end_spin = QDoubleSpinBox()
+        self._end_spin.setRange(0, duration)
+        self._end_spin.setDecimals(3)
+        self._end_spin.setSuffix(" s")
+        self._end_spin.setValue(view_end)
+        self._end_spin.setEnabled(False)
+        time_layout.addRow("End:", self._end_spin)
+
+        layout.addWidget(time_group)
+
+        # -- Overlays --
+        overlay_group = QGroupBox("Overlays")
+        overlay_layout = QGridLayout(overlay_group)
+        self._overlay_checks: dict[str, QCheckBox] = {}
+
+        current = current_overlays or {}
+        for i, (key, label) in enumerate(self.OVERLAY_NAMES):
+            cb = QCheckBox(label)
+            cb.setChecked(current.get(key, False))
+            self._overlay_checks[key] = cb
+            overlay_layout.addWidget(cb, i // 2, i % 2)
+
+        layout.addWidget(overlay_group)
+
+        # -- Options --
+        options_group = QGroupBox("Options")
+        options_layout = QFormLayout(options_group)
+
+        self._legend_check = QCheckBox("Show legend")
+        self._legend_check.setChecked(True)
+        options_layout.addRow(self._legend_check)
+
+        self._dpi_spin = QSpinBox()
+        self._dpi_spin.setRange(72, 1200)
+        self._dpi_spin.setValue(300)
+        options_layout.addRow("DPI:", self._dpi_spin)
+
+        self._width_spin = QDoubleSpinBox()
+        self._width_spin.setRange(2.0, 30.0)
+        self._width_spin.setDecimals(1)
+        self._width_spin.setSuffix(" in")
+        self._width_spin.setValue(10.0)
+        options_layout.addRow("Width:", self._width_spin)
+
+        height_row = QHBoxLayout()
+        self._height_auto = QCheckBox("Auto")
+        self._height_auto.setChecked(True)
+        self._height_auto.toggled.connect(lambda on: self._height_spin.setEnabled(not on))
+        self._height_spin = QDoubleSpinBox()
+        self._height_spin.setRange(1.0, 30.0)
+        self._height_spin.setDecimals(1)
+        self._height_spin.setSuffix(" in")
+        self._height_spin.setValue(4.0)
+        self._height_spin.setEnabled(False)
+        height_row.addWidget(self._height_spin)
+        height_row.addWidget(self._height_auto)
+        options_layout.addRow("Height:", height_row)
+
+        layout.addWidget(options_group)
+
+        # -- Buttons --
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Figure", self._file_path,
+            "PNG Images (*.png);;PDF Documents (*.pdf);;SVG Images (*.svg);;EPS Files (*.eps);;All Files (*)"
+        )
+        if path:
+            self._file_path = path
+            self._path_label.setText(path)
+
+    def _on_view_range_toggled(self, checked: bool):
+        self._start_spin.setEnabled(not checked)
+        self._end_spin.setEnabled(not checked)
+
+    def _on_accept(self):
+        if not self._file_path:
+            QMessageBox.warning(self, "Export Figure", "Please select an output file.")
+            return
+        self.accept()
+
+    def get_settings(self) -> dict:
+        """Return the export settings."""
+        overlays = [key for key, cb in self._overlay_checks.items() if cb.isChecked()]
+        return {
+            'output_path': self._file_path,
+            'start': self._start_spin.value() if not self._use_view_range.isChecked() else None,
+            'end': self._end_spin.value() if not self._use_view_range.isChecked() else None,
+            'overlays': overlays,
+            'legend': self._legend_check.isChecked(),
+            'dpi': self._dpi_spin.value(),
+            'width': self._width_spin.value(),
+            'height': None if self._height_auto.isChecked() else self._height_spin.value(),
+        }
 
 
 class MainWindow(QMainWindow):
@@ -517,6 +671,17 @@ class MainWindow(QMainWindow):
         export_points = QAction("Export P&oint Information...", self)
         export_points.triggered.connect(self._export_points_tsv)
         file_menu.addAction(export_points)
+
+        file_menu.addSeparator()
+
+        export_figure = QAction("Export &Figure...", self)
+        export_figure.triggered.connect(self._export_figure)
+        file_menu.addAction(export_figure)
+
+        print_action = QAction("&Print...", self)
+        print_action.setShortcut(QKeySequence.StandardKey.Print)
+        print_action.triggered.connect(self._print_figure)
+        file_menu.addAction(print_action)
 
         file_menu.addSeparator()
 
@@ -1652,6 +1817,219 @@ class MainWindow(QMainWindow):
                 )
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export points: {e}")
+
+    def _export_figure(self):
+        """Export the current view as a publication-quality figure."""
+        if self._current_file_path is None:
+            QMessageBox.warning(self, "Export Figure", "Load an audio file first.")
+            return
+
+        # Gather current state
+        view_start, view_end = self._spectrogram.get_view_range()
+        duration = self._audio_data.duration if self._audio_data else 1.0
+
+        current_overlays = {
+            'pitch': self._pitch_check.isChecked(),
+            'formants': self._formants_check.isChecked(),
+            'intensity': self._intensity_check.isChecked(),
+            'cog': self._cog_check.isChecked(),
+            'hnr': self._hnr_check.isChecked(),
+            'spectral_tilt': self._tilt_check.isChecked(),
+            'a1p0': self._a1p0_check.isChecked(),
+            'nasal_murmur': self._nasal_murmur_check.isChecked(),
+        }
+
+        # Default output path based on audio file
+        default_path = str(Path(self._current_file_path).with_suffix('.png'))
+
+        dialog = ExportFigureDialog(
+            parent=self,
+            current_overlays=current_overlays,
+            view_start=view_start,
+            view_end=view_end,
+            duration=duration,
+            default_path=default_path,
+        )
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        settings = dialog.get_settings()
+
+        # Determine time range
+        start = settings['start'] if settings['start'] is not None else view_start
+        end = settings['end'] if settings['end'] is not None else view_end
+
+        # Gather current spectrogram settings
+        bandwidth_text = self._bandwidth_combo.currentText()
+        bandwidth = 'wideband' if bandwidth_text == 'Wideband' else 'narrowband'
+
+        colormap_text = self._colormap_combo.currentText()
+        colormap_map = {'grayscale': 'Greys', 'inferno': 'inferno', 'viridis': 'viridis'}
+        colormap = colormap_map.get(colormap_text, 'Greys')
+
+        max_freq = self._get_max_frequency()
+        dynamic_range = float(config['spectrogram']['dynamic_range'])
+        pitch_floor = float(config['pitch']['display_floor'])
+        pitch_ceiling = float(config['pitch']['display_ceiling'])
+
+        # Export data points to a temp file if any exist
+        point_sets = None
+        data_points = self._spectrogram.get_data_points()
+        if data_points.points:
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False, encoding='utf-8')
+            tmp.write('time\tfrequency\n')
+            for pt in sorted(data_points.points, key=lambda p: p.time):
+                tmp.write(f'{pt.time}\t{pt.frequency}\n')
+            tmp.close()
+            point_sets = [('orange', tmp.name)]
+
+        # Determine TextGrid path (use current if loaded)
+        textgrid_path = self._textgrid_path if self._annotations and self._annotations.num_tiers > 0 else None
+
+        # If annotations exist but no saved TextGrid, write to temp file
+        tmp_textgrid_path = None
+        if textgrid_path is None and self._annotations and self._annotations.num_tiers > 0:
+            tmp_tg = tempfile.NamedTemporaryFile(mode='w', suffix='.TextGrid', delete=False, encoding='utf-8')
+            tmp_tg.close()
+            write_textgrid(self._annotations, tmp_tg.name)
+            textgrid_path = tmp_tg.name
+            tmp_textgrid_path = tmp_tg.name
+
+        try:
+            from ..render import render_spectrogram
+
+            self._status_bar.showMessage("Exporting figure...")
+
+            render_spectrogram(
+                audio_path=self._current_file_path,
+                output_path=settings['output_path'],
+                start=start,
+                end=end,
+                overlays=settings['overlays'],
+                preset=self._current_formant_preset,
+                textgrid_path=textgrid_path,
+                point_sets=point_sets,
+                max_freq=max_freq,
+                dynamic_range=dynamic_range,
+                bandwidth=bandwidth,
+                colormap=colormap,
+                pitch_floor=pitch_floor,
+                pitch_ceiling=pitch_ceiling,
+                width=settings['width'],
+                height=settings['height'],
+                dpi=settings['dpi'],
+                legend=settings['legend'],
+            )
+
+            self._status_bar.showMessage(f"Exported figure to {Path(settings['output_path']).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export figure:\n{e}")
+        finally:
+            # Clean up temp files
+            for tmp_path in [point_sets[0][1] if point_sets else None, tmp_textgrid_path]:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+    def _print_figure(self):
+        """Render current view to a temp PDF and open it for printing."""
+        if self._current_file_path is None:
+            QMessageBox.warning(self, "Print", "Load an audio file first.")
+            return
+
+        # Gather current state (same as _export_figure but no dialog)
+        view_start, view_end = self._spectrogram.get_view_range()
+
+        overlays = [key for key, cb in [
+            ('pitch', self._pitch_check),
+            ('formants', self._formants_check),
+            ('intensity', self._intensity_check),
+            ('cog', self._cog_check),
+            ('hnr', self._hnr_check),
+            ('spectral_tilt', self._tilt_check),
+            ('a1p0', self._a1p0_check),
+            ('nasal_murmur', self._nasal_murmur_check),
+        ] if cb.isChecked()]
+
+        bandwidth_text = self._bandwidth_combo.currentText()
+        bandwidth = 'wideband' if bandwidth_text == 'Wideband' else 'narrowband'
+
+        colormap_text = self._colormap_combo.currentText()
+        colormap_map = {'grayscale': 'Greys', 'inferno': 'inferno', 'viridis': 'viridis'}
+        colormap = colormap_map.get(colormap_text, 'Greys')
+
+        max_freq = self._get_max_frequency()
+        dynamic_range = float(config['spectrogram']['dynamic_range'])
+        pitch_floor = float(config['pitch']['display_floor'])
+        pitch_ceiling = float(config['pitch']['display_ceiling'])
+
+        # Data points to temp file
+        point_sets = None
+        data_points = self._spectrogram.get_data_points()
+        if data_points.points:
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False, encoding='utf-8')
+            tmp.write('time\tfrequency\n')
+            for pt in sorted(data_points.points, key=lambda p: p.time):
+                tmp.write(f'{pt.time}\t{pt.frequency}\n')
+            tmp.close()
+            point_sets = [('orange', tmp.name)]
+
+        # TextGrid
+        textgrid_path = self._textgrid_path if self._annotations and self._annotations.num_tiers > 0 else None
+        tmp_textgrid_path = None
+        if textgrid_path is None and self._annotations and self._annotations.num_tiers > 0:
+            tmp_tg = tempfile.NamedTemporaryFile(mode='w', suffix='.TextGrid', delete=False, encoding='utf-8')
+            tmp_tg.close()
+            write_textgrid(self._annotations, tmp_tg.name)
+            textgrid_path = tmp_tg.name
+            tmp_textgrid_path = tmp_tg.name
+
+        # Render to temp PDF
+        stem = Path(self._current_file_path).stem
+        pdf_path = os.path.join(tempfile.gettempdir(), f'ozen_{stem}.pdf')
+
+        try:
+            from ..render import render_spectrogram
+
+            self._status_bar.showMessage("Rendering PDF for printing...")
+
+            render_spectrogram(
+                audio_path=self._current_file_path,
+                output_path=pdf_path,
+                start=view_start,
+                end=view_end,
+                overlays=overlays,
+                preset=self._current_formant_preset,
+                textgrid_path=textgrid_path,
+                point_sets=point_sets,
+                max_freq=max_freq,
+                dynamic_range=dynamic_range,
+                bandwidth=bandwidth,
+                colormap=colormap,
+                pitch_floor=pitch_floor,
+                pitch_ceiling=pitch_ceiling,
+                legend=bool(overlays),
+            )
+
+            # Open PDF in system viewer
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(pdf_path))
+            self._status_bar.showMessage(f"Opened {Path(pdf_path).name} for printing")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Print Error", f"Failed to render PDF:\n{e}")
+        finally:
+            # Clean up temp data files (not the PDF — the viewer needs it)
+            for tmp_path in [point_sets[0][1] if point_sets else None, tmp_textgrid_path]:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
     def _add_tier(self):
         """Add a new annotation tier."""
