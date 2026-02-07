@@ -366,47 +366,50 @@ def extract_features(
     f3_vals = np.where(f3_vals == 0, np.nan, f3_vals)
     f4_vals = np.where(f4_vals == 0, np.nan, f4_vals)
 
-    # === Spectral features using batch methods ===
+    # === Spectral features using per-frame spectrum computation ===
+    # Use per-frame FFT (extract window → spectrum → query) instead of batch
+    # methods, which on some backends use a coarse spectrogram approximation
+    # that produces different values from the standard per-frame approach.
     window_duration = 0.025
+    n_frames = len(times)
 
-    # Spectral moments (CoG, std, skewness, kurtosis) - all at once
-    spectral_moments = snd.get_spectral_moments_at_times(times, window_length=window_duration)
-    cog_vals = spectral_moments['center_of_gravity']
-    std_vals = spectral_moments['standard_deviation']
-    skew_vals = spectral_moments['skewness']
-    kurt_vals = spectral_moments['kurtosis']
+    cog_vals = np.full(n_frames, np.nan)
+    std_vals = np.full(n_frames, np.nan)
+    skew_vals = np.full(n_frames, np.nan)
+    kurt_vals = np.full(n_frames, np.nan)
+    nasal_vals = np.full(n_frames, np.nan)
+    tilt_vals = np.full(n_frames, np.nan)
+    a1p0_vals = np.full(n_frames, np.nan)
 
-    # Band energies for nasal ratio and spectral tilt
-    band_0_500 = snd.get_band_energy_at_times(times, f_min=0, f_max=500, window_length=window_duration)
-    band_0_5000 = snd.get_band_energy_at_times(times, f_min=0, f_max=5000, window_length=window_duration)
-    band_2000_4000 = snd.get_band_energy_at_times(times, f_min=2000, f_max=4000, window_length=window_duration)
-    band_200_300 = snd.get_band_energy_at_times(times, f_min=200, f_max=300, window_length=window_duration)
+    for i, t in enumerate(times):
+        spectrum = snd.get_spectrum_at_time(t, window_duration)
 
-    # Nasal murmur ratio: low-freq energy / total energy
-    with np.errstate(divide='ignore', invalid='ignore'):
-        nasal_vals = np.where(band_0_5000 > 0, band_0_500 / band_0_5000, np.nan)
+        # Spectral moments
+        cog_vals[i] = spectrum.get_center_of_gravity(2.0)
+        std_vals[i] = spectrum.get_standard_deviation(2.0)
+        skew_vals[i] = spectrum.get_skewness(2.0)
+        kurt_vals[i] = spectrum.get_kurtosis(2.0)
 
-    # Spectral tilt: 10*log10(low) - 10*log10(high)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        tilt_vals = np.where(
-            (band_0_500 > 0) & (band_2000_4000 > 0),
-            10 * np.log10(band_0_500) - 10 * np.log10(band_2000_4000),
-            np.nan
-        )
+        # Band energies for derived features
+        band_low = spectrum.get_band_energy(0, 500)
+        band_total = spectrum.get_band_energy(0, 5000)
+        band_high = spectrum.get_band_energy(2000, 4000)
+        band_nasal = spectrum.get_band_energy(200, 300)
 
-    # A1-P0 nasal ratio: amplitude at F0 vs amplitude at ~250Hz
-    # Use batch method with variable frequency bands (F0-dependent)
-    f_mins = np.where(~np.isnan(f0_vals) & (f0_vals > 0), f0_vals * 0.9, np.nan)
-    f_maxs = np.where(~np.isnan(f0_vals) & (f0_vals > 0), f0_vals * 1.1, np.nan)
-    a1_bands = snd.get_variable_band_energy_at_times(times, f_mins, f_maxs, window_length=window_duration)
+        # Nasal murmur ratio: low-freq energy / total energy
+        if band_total > 0:
+            nasal_vals[i] = band_low / band_total
 
-    # Compute A1-P0 ratio in dB
-    with np.errstate(divide='ignore', invalid='ignore'):
-        a1p0_vals = np.where(
-            (a1_bands > 0) & (band_200_300 > 0),
-            10 * np.log10(a1_bands) - 10 * np.log10(band_200_300),
-            np.nan
-        )
+        # Spectral tilt: 10*log10(low) - 10*log10(high)
+        if band_low > 0 and band_high > 0:
+            tilt_vals[i] = 10 * np.log10(band_low) - 10 * np.log10(band_high)
+
+        # A1-P0 nasal ratio: amplitude at F0 vs amplitude at ~250Hz
+        f0 = f0_vals[i]
+        if not np.isnan(f0) and f0 > 0:
+            a1_band = spectrum.get_band_energy(f0 * 0.9, f0 * 1.1)
+            if a1_band > 0 and band_nasal > 0:
+                a1p0_vals[i] = 10 * np.log10(a1_band) - 10 * np.log10(band_nasal)
 
     if progress_callback:
         progress_callback(1.0)
