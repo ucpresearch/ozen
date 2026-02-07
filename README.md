@@ -167,6 +167,66 @@ Config files can customize colors, formant presets, default tiers, and more. See
 - **Exit confirmation**: If you have unsaved changes, you'll be prompted to save before closing
 - When starting with a non-existing TextGrid path, you'll be asked if you want to create it
 
+## Offline Rendering
+
+Ozen includes a headless spectrogram renderer for generating publication-quality figures without the GUI. Useful for batch processing, scripting, and paper figures.
+
+```bash
+python -m ozen.render recording.wav -o fig.png --overlays pitch,formants --legend
+```
+
+### Quick Examples
+
+```bash
+# Windowed view with annotations
+python -m ozen.render recording.wav -o fig.pdf \
+    --start 0.5 --end 2.0 \
+    --overlays pitch,formants,intensity \
+    --textgrid recording.TextGrid --tiers words,phones
+
+# Wideband spectrogram with custom colormap
+python -m ozen.render recording.wav -o fig.png \
+    --bandwidth wideband --colormap inferno \
+    --overlays pitch,formants --preset male
+
+# Multiple colored data point sets
+python -m ozen.render recording.wav -o fig.png \
+    --overlays pitch,formants \
+    --points red=midvowels.tsv --points blue=pitch-peaks.tsv
+```
+
+### Available Overlays
+
+| Name | Description | Display Range |
+|------|-------------|---------------|
+| `pitch` | Fundamental frequency (F0) | pitch-floor–ceiling Hz (log scale) |
+| `formants` | Formant frequencies F1–F4 | direct Hz (red=narrow, pink=wide bandwidth) |
+| `intensity` | Sound pressure level | 30–90 dB |
+| `cog` | Center of gravity (spectral centroid) | direct Hz |
+| `hnr` | Harmonics-to-noise ratio | −10–40 dB |
+| `spectral_tilt` | Low vs high frequency energy | −20–+40 dB |
+| `a1p0` | A1–P0 nasal ratio | −20–+20 dB |
+| `nasal_murmur` | Low-frequency energy ratio | 0–1 |
+
+### Output Formats
+
+PNG, PDF, SVG, and EPS. Use `--dpi` to control raster resolution (default: 300).
+
+### Python API
+
+```python
+from ozen.render import render_spectrogram
+
+render_spectrogram(
+    'recording.wav', 'fig.png',
+    overlays=['pitch', 'formants'],
+    textgrid_path='recording.TextGrid',
+    legend=True,
+)
+```
+
+For the full manual with all options: `python -m ozen.render --man`
+
 ## Supported Formats
 
 ### Audio
