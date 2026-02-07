@@ -193,6 +193,15 @@ python -m ozen.render recording.wav -o fig.png \
 python -m ozen.render recording.wav -o fig.png \
     --overlays pitch,formants \
     --points red=midvowels.tsv --points blue=pitch-peaks.tsv
+
+# Points as markers only (no vertical lines), semi-transparent
+python -m ozen.render recording.wav -o fig.png \
+    --overlays pitch,formants \
+    --points "#4488CC"=vowels.tsv --point-markers-only --point-alpha 0.6
+
+# Custom font for publication
+python -m ozen.render recording.wav -o fig.pdf \
+    --overlays pitch,formants --legend --font "Times New Roman"
 ```
 
 ### Available Overlays
@@ -208,9 +217,27 @@ python -m ozen.render recording.wav -o fig.png \
 | `a1p0` | A1–P0 nasal ratio | −20–+20 dB |
 | `nasal_murmur` | Low-frequency energy ratio | 0–1 |
 
+### Data Point Options
+
+| Option | Description |
+|--------|-------------|
+| `--points [COLOR=]FILE` | Data point TSV file (repeatable). Colors: names (`red`), hex (`#4488CC`, `#FF880080` with alpha), grayscale (`0.6`) |
+| `--point-markers-only` | Draw only circle markers, omit vertical lines |
+| `--point-alpha FLOAT` | Opacity for all points, 0.0–1.0 (default: 1.0) |
+
+### Figure Options
+
+| Option | Description |
+|--------|-------------|
+| `--font FAMILY` | Font family for all text (e.g., `Times New Roman`, `Helvetica`) |
+| `--legend` | Show legend with overlay names, colors, and value ranges |
+| `--title TEXT` | Figure title |
+| `--width`, `--height` | Figure dimensions in inches |
+| `--dpi NUMBER` | DPI for raster output (default: 300) |
+
 ### Output Formats
 
-PNG, PDF, SVG, and EPS. Use `--dpi` to control raster resolution (default: 300).
+PNG, PDF, SVG, and EPS.
 
 ### Python API
 
@@ -222,6 +249,9 @@ render_spectrogram(
     overlays=['pitch', 'formants'],
     textgrid_path='recording.TextGrid',
     legend=True,
+    font='Helvetica',
+    point_markers_only=True,
+    point_alpha=0.8,
 )
 ```
 

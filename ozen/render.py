@@ -303,12 +303,14 @@ def _draw_legend(ax, overlays: list[str], overlay_colors: dict,
                   framealpha=0.85, edgecolor='gray', fancybox=False)
 
 
-def _draw_data_points(ax, point_sets: list[tuple[str, list[dict]]], freq_start: float, freq_end: float):
+def _draw_data_points(ax, point_sets: list[tuple[str, list[dict]]], freq_start: float, freq_end: float,
+                      markers_only: bool = False, alpha: float = 1.0):
     """Draw data collection point sets on the spectrogram axis."""
     for color, points in point_sets:
         for pt in points:
-            ax.axvline(pt['time'], color=color, linewidth=1, alpha=0.7, zorder=7)
-            ax.scatter([pt['time']], [pt['frequency']], color=color,
+            if not markers_only:
+                ax.axvline(pt['time'], color=color, linewidth=1, alpha=alpha * 0.7, zorder=7)
+            ax.scatter([pt['time']], [pt['frequency']], color=color, alpha=alpha,
                        s=30, zorder=8, edgecolors='white', linewidths=0.5)
 
 
@@ -337,6 +339,9 @@ def render_spectrogram(
     title: Optional[str] = None,
     legend: bool = False,
     config_path: Optional[str | Path] = None,
+    point_markers_only: bool = False,
+    point_alpha: float = 1.0,
+    font: Optional[str] = None,
 ):
     """Render a publication-quality spectrogram image.
 
@@ -367,15 +372,21 @@ def render_spectrogram(
         title: Optional figure title.
         legend: If True, draw a legend showing overlay names, colors, and ranges.
         config_path: Path to ozen config YAML.
+        point_markers_only: If True, draw only circle markers without vertical lines.
+        point_alpha: Opacity for data points, 0.0 (transparent) to 1.0 (opaque, default).
+        font: Font family name for all text (e.g., 'Times New Roman', 'Helvetica').
     """
     audio_path = Path(audio_path)
     output_path = Path(output_path)
     overlays = overlays or []
     point_sets_raw = point_sets or []
 
-    # 1. Setup: load config, switch backend
+    # 1. Setup: load config, switch backend, set font
     if config_path:
         reload_config(config_path)
+
+    if font:
+        plt.rcParams['font.family'] = font
 
     if backend != 'auto':
         if not switch_backend(backend):
@@ -534,7 +545,8 @@ def render_spectrogram(
 
     # Draw data points
     if loaded_point_sets:
-        _draw_data_points(ax_spec, loaded_point_sets, freq_start, freq_end)
+        _draw_data_points(ax_spec, loaded_point_sets, freq_start, freq_end,
+                          markers_only=point_markers_only, alpha=point_alpha)
 
     # -- Annotation tier axes --
     for i, tier in enumerate(display_tiers):
@@ -584,6 +596,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--tiers', default=None, help='Comma-separated tier names to display')
     parser.add_argument('--points', action='append', default=None,
                         help='[COLOR=]file.tsv - data point file (repeatable)')
+    parser.add_argument('--point-markers-only', action='store_true',
+                        help='Draw only circle markers for data points (no vertical lines)')
+    parser.add_argument('--point-alpha', type=float, default=1.0,
+                        help='Opacity for data points, 0.0-1.0 (default: 1.0, fully opaque)')
     parser.add_argument('--max-freq', type=float, default=5000.0, help='Max frequency in Hz (default: 5000)')
     parser.add_argument('--dynamic-range', type=float, default=70.0, help='Dynamic range in dB (default: 70)')
     parser.add_argument('--bandwidth', default='narrowband', choices=['narrowband', 'wideband'],
@@ -598,6 +614,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--title', default=None, help='Figure title')
     parser.add_argument('--legend', action='store_true', help='Show legend with overlay names, colors, and ranges')
     parser.add_argument('-c', '--config', default=None, help='Path to ozen config YAML')
+    parser.add_argument('--font', default=None,
+                        help="Font family for all text (e.g., 'Times New Roman', 'Helvetica')")
     parser.add_argument('--man', action='store_true', help='Show full manual page')
 
     return parser.parse_args(argv)
@@ -688,13 +706,20 @@ ANNOTATIONS
 
 DATA POINTS
     --points [COLOR=]FILE   Data point TSV file. Repeatable.
+    --point-markers-only    Omit vertical lines, draw markers only.
+    --point-alpha FLOAT     Opacity 0.0-1.0 (default: 1.0, fully opaque).
 
     The TSV file must have 'time' and 'frequency' column headers.
     Points are drawn as vertical lines with circle markers.
+    Use --point-markers-only to draw only the circle markers
+    without vertical lines.
 
-    Colors can be any matplotlib color name or hex code:
+    Colors can be any matplotlib color name, hex code, or
+    grayscale float:
         --points red=vowels.tsv
         --points "#4488CC"=stops.tsv
+        --points "#FF880080"=faded.tsv   (8-digit hex with alpha)
+        --points "0.6"=gray.tsv          (grayscale: 0=black, 1=white)
         --points nasals.tsv              (default: orange)
 
     Multiple point sets can be overlaid:
@@ -707,6 +732,8 @@ FIGURE
     --title TEXT            Figure title
     --legend                Add legend showing overlay names, colors,
                             and value ranges
+    --font FAMILY           Font family for all text, e.g.,
+                            'Times New Roman', 'Helvetica', 'Courier'
 
 CONFIGURATION
     -c, --config PATH       Path to Ozen config YAML file. Overrides
@@ -807,6 +834,9 @@ def main(argv: Optional[list[str]] = None):
         title=args.title,
         legend=args.legend,
         config_path=args.config,
+        point_markers_only=args.point_markers_only,
+        point_alpha=args.point_alpha,
+        font=args.font,
     )
 
 
