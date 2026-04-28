@@ -96,6 +96,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Ozen")
     app.setOrganizationName("Ozen")
+    app.setDesktopFileName("ozen")
 
     window = MainWindow()
 
