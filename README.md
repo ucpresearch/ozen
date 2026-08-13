@@ -21,44 +21,50 @@ A Python-based acoustic analysis and annotation tool inspired by Praat, built fo
 ### macOS / Linux
 
 ```bash
-# Clone the repository
-git clone https://github.com/ucpresearch/ozen.git
-cd ozen
-
 # Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Ozen
+pip install "ozen @ git+https://github.com/ucpresearch/ozen.git"
 ```
 
 ### Windows
 
 ```powershell
-# Clone the repository
-git clone https://github.com/ucpresearch/ozen.git
-cd ozen
-
 # Create and activate virtual environment
 python -m venv .venv
 .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Ozen
+pip install "ozen @ git+https://github.com/ucpresearch/ozen.git"
 ```
+
+This installs an `ozen` command, so you can launch it with either `ozen` or `python -m ozen`.
 
 **Note:** On Windows, `sounddevice` includes PortAudio automatically. On macOS/Linux, you may need to install it separately:
 - macOS: `brew install portaudio`
 - Ubuntu/Debian: `sudo apt install portaudio19-dev`
 
+### From source (for development)
+
+```bash
+git clone https://github.com/ucpresearch/ozen.git
+cd ozen
+
+python3 -m venv .venv          # Windows: python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+pip install -e .
+```
+
 ## Updating
 
 ```bash
-cd ozen
-git pull
-pip install -r requirements.txt  # if dependencies changed
+pip install --upgrade --force-reinstall "ozen @ git+https://github.com/ucpresearch/ozen.git"
 ```
+
+From a source checkout, `git pull` is enough (an editable install picks up code changes automatically); re-run `pip install -e .` if dependencies changed.
 
 On Windows, remember to activate the virtual environment first with `.venv\Scripts\activate`.
 

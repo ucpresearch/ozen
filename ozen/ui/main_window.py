@@ -611,9 +611,10 @@ class MainWindow(QMainWindow):
 
     def _set_window_icon(self):
         """Set the application window icon."""
-        # Try to find icon in resources directory relative to package
+        # Icons ship inside the package (ozen/resources/), so this works from
+        # a source checkout and from an installed wheel alike.
         import pathlib
-        package_dir = pathlib.Path(__file__).parent.parent.parent
+        package_dir = pathlib.Path(__file__).parent.parent
         icon_paths = [
             package_dir / "resources" / "ozen-icon.png",
             package_dir / "resources" / "ozen-icon-256.png",

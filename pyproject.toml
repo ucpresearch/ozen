@@ -10,10 +10,14 @@ requires-python = ">=3.11"
 dependencies = [
     "PyQt6>=6.6.0",
     "pyqtgraph>=0.13.0",
+    "praatfan",
+    "praatfan_rust",
     "sounddevice>=0.4.0",
     "soundfile>=0.12.0",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
+    "matplotlib>=3.7.0",
+    "PyYAML>=6.0",
 ]
 
 
@@ -26,3 +30,6 @@ ozen = "ozen.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["ozen*"]
+
+[tool.setuptools.package-data]
+ozen = ["resources/*.png"]
